@@ -47,18 +47,23 @@ Prepare a short neutral summary (3-7 bullets or short paragraph) covering:
 - trade-offs
 - recommendation (if any)
 
-### 4) Ask one focused question
-Call `ask_user` with one decision at a time:
+### 4) Ask the right `ask_user` shape
+Default to one decision at a time for a single high-stakes trade-off:
 - `question`: concrete decision prompt
 - `context`: synthesized summary
 - `options`: 2-5 clear choices when possible
 - `allowMultiple`: `false` unless independent selections are genuinely needed
 - `allowFreeform`: usually `true`
 
+When you already know that you need several related clarification answers before implementation, prefer asking them in one `mode: "batch"` call instead of asking them one by one. Use batch mode for one related clarification sweep with 2-7 questions known up front and belonging to one topic. Do not split such a clarification packet into repeated single-question pauses unless later questions genuinely depend on earlier answers.
+
+Use `mode: "batch"` only for clarifications, not for a single high-stakes go/no-go decision, unrelated questions, or branching interviews where later questions depend on earlier answers.
+
 ### 5) Commit the decision
 After response:
-- restate the decision in plain language
+- restate the decision or collected clarifications in plain language
 - state what will be done next
+- use the returned answer text directly; successful `ask_user` results include model-visible answers in plain-text `content`
 - proceed with implementation
 
 ### 6) Re-open only on new ambiguity
@@ -71,6 +76,7 @@ Apply a strict question budget per decision boundary:
 
 - **Max 1** `ask_user` call per decision boundary in normal cases.
 - **Max 2** `ask_user` calls for the same boundary when first response is unclear/cancelled.
+- A single batch clarification call counts as one `ask_user` call for this budget.
 - Never ask the same trade-off again without new evidence.
 
 Escalation ladder:
@@ -95,7 +101,8 @@ Use:
 
 Avoid:
 - broad/open prompts with no decision boundary
-- multiple unrelated decisions in one question
+- multiple unrelated decisions in one single-question prompt
+- unrelated or branching questions in one batch
 - questions that should be answered by reading code/docs first
 
 ### Option quality
@@ -137,6 +144,37 @@ Good options include a short description when trade-offs are non-obvious.
   ],
   "allowMultiple": true,
   "allowFreeform": true
+}
+```
+
+### Batch clarification sweep before implementation
+
+Use this when the needed clarifications are already known up front and can be answered in one pass. The batch overlay supports moving between questions, direct freeform entry where allowed, and finishing from the last question.
+
+```json
+{
+  "mode": "batch",
+  "title": "Clarify implementation scope",
+  "context": "I have enough evidence to proceed, but I still need a few related clarifications.",
+  "questions": [
+    {
+      "id": "surface",
+      "question": "Which surface is in scope?",
+      "options": ["Overlay", "RPC fallback", "Both"],
+      "required": true
+    },
+    {
+      "id": "compat",
+      "question": "Must the current single-question prompts remain unchanged?",
+      "options": ["Yes", "No", "Mostly yes"],
+      "required": true
+    },
+    {
+      "id": "notes",
+      "question": "Anything else I should optimize for?",
+      "required": false
+    }
+  ]
 }
 ```
 

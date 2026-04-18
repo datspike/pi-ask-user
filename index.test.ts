@@ -86,6 +86,8 @@ beforeAll(() => {
          enter: "enter",
          up: "up",
          down: "down",
+         left: "left",
+         right: "right",
          space: "space",
          backspace: "backspace",
          ctrl: (key: string) => `ctrl+${key}`,
@@ -121,6 +123,7 @@ beforeAll(() => {
 
 type RegisteredTool = {
    execute: (...args: any[]) => Promise<any>;
+   renderCall?: (args: any, theme: any) => any;
    renderResult: (result: any, options: any, theme: any) => any;
 };
 
@@ -377,14 +380,16 @@ describe("ask_user", () => {
       expect(editorInputs).toEqual(["ctrl+enter"]);
    });
 
-   test("filters single-select options from typed search before confirming", async () => {
+   test("starts direct freeform entry from typed input in single-select mode", async () => {
       const tool = await setupTool();
+      editorText = "";
 
       const result = await tool.execute(
          "tool-call-id",
          {
             question: "Which option should we use?",
             options: ["Alpha", "Beta", "Gamma"],
+            allowFreeform: true,
          },
          undefined,
          undefined,
@@ -403,6 +408,7 @@ describe("ask_user", () => {
                   );
 
                   component.handleInput("b");
+                  expect(editorText).toBe("b");
                   component.handleInput("enter");
                   return resolved ?? null;
                },
@@ -411,19 +417,20 @@ describe("ask_user", () => {
       );
 
       expect(result.isError).not.toBe(true);
-      expect(result.details.response).toEqual({ kind: "selection", selections: ["Beta"] });
+      expect(result.details.response).toEqual({ kind: "freeform", text: "b" });
       expect(result.details.cancelled).toBe(false);
    });
 
-   test("keeps single-select search usable when comment toggling is enabled", async () => {
+   test("does not advertise type-to-filter in single-select help text", async () => {
       const tool = await setupTool();
+      let helpText = "";
 
-      const result = await tool.execute(
+      await tool.execute(
          "tool-call-id",
          {
             question: "Which option should we use?",
             options: ["Chrome", "Firefox", "Safari"],
-            allowComment: true,
+            allowFreeform: true,
          },
          undefined,
          undefined,
@@ -431,30 +438,26 @@ describe("ask_user", () => {
             hasUI: true,
             ui: {
                custom: async (factory: any) => {
-                  let resolved: string | null | undefined;
                   const component = factory(
                      { requestRender() { }, terminal: { rows: 24 } },
                      createTheme(),
                      createKeybindings(),
-                     (value: string | null) => {
-                        resolved = value;
-                     },
+                     () => { },
                   );
 
-                  component.handleInput("c");
-                  component.handleInput("enter");
-                  return resolved ?? null;
+                  helpText = (component as any).helpText.render().join("\n");
+                  expect(component.render(100).join("\n")).not.toContain("type to filter");
+                  return null;
                },
             },
          },
       );
 
-      expect(result.isError).not.toBe(true);
-      expect(result.details.response).toEqual({ kind: "selection", selections: ["Chrome"] });
-      expect(result.details.cancelled).toBe(false);
+      expect(helpText).toContain("type custom answer");
+      expect(helpText).not.toContain("type filter");
    });
 
-   test("treats out-of-range number keys as search input in single-select mode", async () => {
+   test("keeps non-freeform single-select option-driven when printable input is typed", async () => {
       const tool = await setupTool();
 
       const result = await tool.execute(
@@ -462,6 +465,7 @@ describe("ask_user", () => {
          {
             question: "Which option should we use?",
             options: ["Alpha", "Beta 7", "Gamma"],
+            allowFreeform: false,
          },
          undefined,
          undefined,
@@ -480,6 +484,7 @@ describe("ask_user", () => {
                   );
 
                   component.handleInput("7");
+                  component.handleInput("b");
                   component.handleInput("enter");
                   return resolved ?? null;
                },
@@ -488,12 +493,13 @@ describe("ask_user", () => {
       );
 
       expect(result.isError).not.toBe(true);
-      expect(result.details.response).toEqual({ kind: "selection", selections: ["Beta 7"] });
+      expect(result.details.response).toEqual({ kind: "selection", selections: ["Alpha"] });
       expect(result.details.cancelled).toBe(false);
    });
 
-   test("keeps freeform available when search filters out every option", async () => {
+   test("still supports explicit freeform selection from the option list", async () => {
       const tool = await setupTool();
+      editorText = "custom from editor";
       editorInputs = [];
 
       const result = await tool.execute(
@@ -519,11 +525,9 @@ describe("ask_user", () => {
                      },
                   );
 
-                  component.handleInput("z");
-                  component.handleInput("z");
-                  component.handleInput("z");
+                  component.handleInput("down");
+                  component.handleInput("down");
                   component.handleInput("enter");
-                  editorText = "custom from editor";
                   component.handleInput("enter");
                   return resolved ?? null;
                },
@@ -538,6 +542,93 @@ describe("ask_user", () => {
       expect(result.details.cancelled).toBe(false);
       expect(answeredEvent?.payload.response).toEqual({ kind: "freeform", text: "custom from editor" });
       expect(editorInputs).toEqual(["enter"]);
+   });
+
+   test("preserves typed digits when starting from the explicit freeform row in single-select", async () => {
+      const tool = await setupTool();
+      editorText = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            question: "Which option should we use?",
+            options: ["Alpha", "Beta"],
+            allowFreeform: true,
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: string | null | undefined;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: string | null) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.handleInput("down");
+                  component.handleInput("down");
+                  component.handleInput("1");
+                  expect(editorText).toBe("1");
+                  component.handleInput("enter");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.response).toEqual({ kind: "freeform", text: "1" });
+      expect(result.details.cancelled).toBe(false);
+   });
+
+   test("preserves typed input when starting from the explicit freeform row in multi-select", async () => {
+      const tool = await setupTool();
+      editorText = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            question: "Which options should we use?",
+            options: ["Alpha", "Beta"],
+            allowMultiple: true,
+            allowFreeform: true,
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: string | null | undefined;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: string | null) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.handleInput("down");
+                  component.handleInput("down");
+                  component.handleInput("x");
+                  expect(editorText).toBe("x");
+                  component.handleInput("enter");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.response).toEqual({ kind: "freeform", text: "x" });
+      expect(result.details.cancelled).toBe(false);
    });
 
    test("shows the remapped cancel key in freeform help text", async () => {
@@ -868,6 +959,311 @@ describe("ask_user", () => {
       expect(result.details.cancelled).toBe(false);
    });
 
+   test("rejects invalid batch requests before starting interaction", async () => {
+      const tool = await setupTool();
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [{ id: "only", question: "Just one question" }],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async () => {
+                  throw new Error("custom() should not be called for invalid batch payloads");
+               },
+            },
+         },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Batch mode requires between 2 and 7 questions");
+   });
+
+   test("completes a batch clarification flow in the overlay", async () => {
+      const tool = await setupTool();
+      let rendered = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            context: "Need a few details before implementation.",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: any;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: any) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.handleInput("enter");
+                  rendered = component.render(100).join("\n");
+                  component.handleInput("enter");
+                  component.handleInput("ctrl+s");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.mode).toBe("batch");
+      expect(result.details.response).toEqual({
+         kind: "batch",
+         answers: [
+            { id: "surface", kind: "selection", selections: ["Overlay"] },
+            { id: "compat", kind: "selection", selections: ["Yes"] },
+         ],
+      });
+      expect(rendered).toContain("Questions (2/2)");
+      expect(rendered).toContain("1. Which surface is in scope?");
+      expect(rendered).toContain("2. Must the current behavior stay exact?");
+   });
+
+   test("pressing enter on the last batch multi-select question saves and submits the batch", async () => {
+      const tool = await setupTool();
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+               { id: "targets", question: "Which targets are in scope?", options: ["One", "Two", "Three", "Four"], allowMultiple: true },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: any;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: any) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.handleInput("enter");
+                  component.handleInput("down");
+                  component.handleInput("down");
+                  component.handleInput("down");
+                  component.handleInput("space");
+                  component.handleInput("enter");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.response).toEqual({
+         kind: "batch",
+         answers: [
+            { id: "surface", kind: "selection", selections: ["Overlay"] },
+            { id: "targets", kind: "selection", selections: ["Four"] },
+         ],
+      });
+   });
+
+   test("supports left and right arrow navigation between batch questions without losing saved answers", async () => {
+      const tool = await setupTool();
+      let renderedOnReturn = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: any;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: any) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.handleInput("enter");
+                  component.handleInput("left");
+                  renderedOnReturn = component.render(100).join("\n");
+                  component.handleInput("right");
+                  component.handleInput("enter");
+                  component.handleInput("ctrl+s");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.response).toEqual({
+         kind: "batch",
+         answers: [
+            { id: "surface", kind: "selection", selections: ["Overlay"] },
+            { id: "compat", kind: "selection", selections: ["Yes"] },
+         ],
+      });
+      expect(renderedOnReturn).toContain("Questions (1/2)");
+      expect(renderedOnReturn).toContain("Q1. Which surface is in scope?");
+      expect(renderedOnReturn).toContain("Overlay");
+   });
+
+   test("shows arrow-key hints in the batch overlay help text", async () => {
+      const tool = await setupTool();
+      let rendered = "";
+
+      await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     () => null,
+                  );
+
+                  rendered = component.render(100).join("\n");
+                  return null;
+               },
+            },
+         },
+      );
+
+      expect(rendered).toContain("←→ switch question");
+      expect(rendered).toContain("ctrl+n next");
+      expect(rendered).toContain("ctrl+p prev");
+   });
+
+   test("keeps the unanswered required batch question active when submit is attempted early", async () => {
+      const tool = await setupTool();
+      let rendered = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     () => { },
+                  );
+
+                  component.handleInput("enter");
+                  component.handleInput("ctrl+s");
+                  rendered = component.render(100).join("\n");
+                  return null;
+               },
+            },
+         },
+      );
+
+      expect(result.details.cancelled).toBe(true);
+      expect(rendered).toContain("Q2. Must the current behavior stay exact?");
+      expect(rendered).toContain("pending");
+   });
+
+   test("renders expanded batch results with explicit skipped answers", async () => {
+      const tool = await setupTool();
+      const component = tool.renderResult(
+         {
+            content: [{ type: "text", text: "User answered: 3 answer(s)" }],
+            details: {
+               mode: "batch",
+               title: "Clarify scope",
+               context: "Need a few details before implementation.",
+               questions: [
+                  { id: "surface", question: "Which surface is in scope?", options: [], allowMultiple: false, allowFreeform: true, required: true },
+                  { id: "compat", question: "Must the current behavior stay exact?", options: [], allowMultiple: false, allowFreeform: true, required: true },
+                  { id: "notes", question: "Anything else?", options: [], allowMultiple: false, allowFreeform: true, required: false },
+               ],
+               response: {
+                  kind: "batch",
+                  answers: [
+                     { id: "surface", kind: "selection", selections: ["Overlay"] },
+                     { id: "compat", kind: "freeform", text: "Mostly yes" },
+                     { id: "notes", kind: "skipped" },
+                  ],
+               },
+               cancelled: false,
+            },
+         },
+         { expanded: true, isPartial: false },
+         createTheme(),
+      ) as any;
+
+      const rendered = component.render(120).join("\n");
+
+      expect(rendered).toContain("Batch: Clarify scope");
+      expect(rendered).toContain("Q1: Which surface is in scope?");
+      expect(rendered).toContain("Overlay");
+      expect(rendered).toContain("Q3: Anything else?");
+      expect(rendered).toContain("Skipped");
+   });
+
 
    describe("RPC fallback (custom() returns undefined)", () => {
       test("single-select falls back to ctx.ui.select()", async () => {
@@ -901,8 +1297,33 @@ describe("ask_user", () => {
          expect(result.isError).not.toBe(true);
          expect(result.details.response).toEqual({ kind: "selection", selections: ["Blue"] });
          expect(result.details.cancelled).toBe(false);
+         expect(result.content[0].text).toBe("User answered: Blue");
          expect(selectTitle).toContain("Pick a color");
          expect(selectOptions).toEqual(["Red", "Blue"]);
+      });
+
+      test("freeform-only result content includes the typed answer", async () => {
+         const tool = await setupTool();
+
+         const result = await tool.execute(
+            "tool-call-id",
+            {
+               question: "What color should we use?",
+            },
+            undefined,
+            undefined,
+            {
+               hasUI: true,
+               ui: {
+                  input: async () => "Purple",
+               },
+            },
+         );
+
+         expect(result.isError).not.toBe(true);
+         expect(result.details.response).toEqual({ kind: "freeform", text: "Purple" });
+         expect(result.details.cancelled).toBe(false);
+         expect(result.content[0].text).toBe("User answered: Purple");
       });
 
       test("single-select with freeform appends sentinel option", async () => {
@@ -1040,6 +1461,131 @@ describe("ask_user", () => {
          expect(result.details.cancelled).toBe(false);
       });
 
+
+      test("batch mode falls back to a single tool-owned clarification loop", async () => {
+         const tool = await setupTool();
+         let selectCalls = 0;
+         let inputCalls = 0;
+
+         const result = await tool.execute(
+            "tool-call-id",
+            {
+               mode: "batch",
+               title: "Clarify scope",
+               context: "Need a few details before implementation.",
+               questions: [
+                  { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+                  { id: "notes", question: "Anything else I should optimize for?", required: false },
+               ],
+            },
+            undefined,
+            undefined,
+            {
+               hasUI: true,
+               ui: {
+                  custom: async () => undefined,
+                  select: async (_title: string, opts: string[]) => {
+                     selectCalls += 1;
+                     if (selectCalls === 1) return "Fallback";
+                     expect(opts).toEqual(["Submit answers", "Cancel"]);
+                     return "Submit answers";
+                  },
+                  input: async (title: string) => {
+                     inputCalls += 1;
+                     expect(title).toContain("[2/2] Anything else I should optimize for?");
+                     return "";
+                  },
+               },
+            },
+         );
+
+         expect(result.isError).not.toBe(true);
+         expect(inputCalls).toBe(1);
+         expect(result.details.mode).toBe("batch");
+         expect(result.details.response).toEqual({
+            kind: "batch",
+            answers: [
+               { id: "surface", kind: "selection", selections: ["Fallback"] },
+               { id: "notes", kind: "skipped" },
+            ],
+         });
+         expect(result.content[0].text).toBe(
+            "User answered the clarification batch (Clarify scope):\n- Which surface is in scope?: Fallback\n- Anything else I should optimize for?: Skipped",
+         );
+      });
+
+      test("emits batch cancellation metadata when fallback batch mode is cancelled", async () => {
+         const tool = await setupTool();
+
+         const result = await tool.execute(
+            "tool-call-id",
+            {
+               mode: "batch",
+               title: "Clarify scope",
+               questions: [
+                  { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+                  { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
+               ],
+            },
+            undefined,
+            undefined,
+            {
+               hasUI: true,
+               ui: {
+                  custom: async () => undefined,
+                  select: async () => undefined,
+                  input: async () => undefined,
+               },
+            },
+         );
+
+         const cancelledEvent = emittedEvents.find((event) => event.name === "ask:cancelled");
+
+         expect(result.details.cancelled).toBe(true);
+         expect(result.details.response).toBeNull();
+         expect(cancelledEvent?.payload.mode).toBe("batch");
+         expect(cancelledEvent?.payload.questions).toHaveLength(2);
+      });
+
+      test("single-question overlay behavior is unchanged when arrow keys are pressed", async () => {
+         const tool = await setupTool();
+
+         const result = await tool.execute(
+            "tool-call-id",
+            {
+               question: "Pick a color",
+               options: ["Red", "Blue"],
+               allowFreeform: false,
+            },
+            undefined,
+            undefined,
+            {
+               hasUI: true,
+               ui: {
+                  custom: async (factory: any) => {
+                     let resolved: any;
+                     const component = factory(
+                        { requestRender() { }, terminal: { rows: 24 } },
+                        createTheme(),
+                        createKeybindings(),
+                        (value: any) => {
+                           resolved = value;
+                        },
+                     );
+
+                     component.handleInput("right");
+                     component.handleInput("left");
+                     component.handleInput("enter");
+                     return resolved ?? null;
+                  },
+               },
+            },
+         );
+
+         expect(result.isError).not.toBe(true);
+         expect(result.details.response).toEqual({ kind: "selection", selections: ["Red"] });
+         expect(result.details.cancelled).toBe(false);
+      });
 
       test("returns cancelled when select() returns undefined", async () => {
          const tool = await setupTool();

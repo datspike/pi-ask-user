@@ -33,10 +33,14 @@ Use this protocol whenever the trigger matrix says to ask.
    - read code/docs/logs first; do not ask blindly
 3. **Summarize context**
    - prepare concise trade-off context (3–7 bullets or short paragraph)
-4. **Ask one focused question**
-   - call `ask_user` for one decision at a time
+4. **Ask the right `ask_user` shape**
+   - default to one decision at a time for a single high-stakes gate
+   - when several related clarifications are already known up front, prefer one `mode: "batch"` call instead of repeated single-question pauses
+   - use `mode: "batch"` only for one related clarification sweep with 2-7 questions known up front
+   - do not use batch mode for unrelated or branching questions
 5. **Commit and proceed**
-   - restate chosen option and implement accordingly
+   - restate chosen option or collected clarifications and implement accordingly
+   - successful `ask_user` results expose model-visible answer text in plain-text `content`, in addition to structured details
 
 ### Retry/cancel policy
 
@@ -49,7 +53,14 @@ Use this protocol whenever the trigger matrix says to ask.
 
 ---
 
-## 3) Example Payloads
+## 3) Batch UX and response notes
+
+- Batch mode is a lightweight one-overlay clarification flow, not a generic form engine.
+- In the interactive overlay, the user can move across batch questions and type direct freeform answers where allowed.
+- If the agent already knows it needs several related clarifications before implementation, it should ask them together in one batch instead of serializing them into multiple pauses.
+- Successful results include visible answer text in `content`, so the agent can continue even when only plain-text tool output is surfaced.
+
+## 4) Example Payloads
 
 ### Architecture decision
 
