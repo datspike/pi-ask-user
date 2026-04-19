@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.7.0](https://github.com/datspike/pi-ask-user/releases/tag/v0.7.0) - 2026-04-19
+
+### Added
+
+- Batch clarification mode for collecting 2-7 related answers in a single `ask_user` call
+
+### Changed
+
+- Fork releases now publish under the scoped npm package name `@datspike/pi-ask-user` to avoid collision with the upstream `pi-ask-user` package
+- Successful tool results now include a plain-text answer summary in `content`, so agents can continue even in integrations that only surface tool text
+- Updated tool guidance and bundled skill guidance around one focused question per call or one related clarification batch
+- Refactored the runtime into dedicated core, overlay controller, overlay UI, and batch component modules for easier maintenance
+
+### Fixed
+
+- Persist batch freeform drafts when moving between questions with arrow navigation
+- Harden freeform entry and backspace handling across selectable single-question and batch flows
+
 ## [0.6.1](https://github.com/edlsh/pi-ask-user/releases/tag/v0.6.1) - 2026-04-07
 
 ### Changed
