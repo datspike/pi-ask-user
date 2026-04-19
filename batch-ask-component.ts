@@ -14,13 +14,7 @@ import {
   type BatchQuestion,
   formatSingleResponseSummary,
 } from "./ask-user-core";
-import {
-  BatchAskController,
-  readEditorText,
-  setEditorFocus,
-  writeEditorText,
-  writeEditorTextIfNeeded,
-} from "./ask-overlay-controller";
+import { BatchAskController } from "./ask-overlay-controller";
 import {
   ASK_USER_VERSION,
   BATCH_NEXT_ARROW_KEYS,
@@ -40,6 +34,12 @@ import {
   MultiSelectList,
   WrappedSingleSelectList,
 } from "./ask-overlay-ui";
+import {
+  readEditorText,
+  setEditorFocus,
+  writeEditorText,
+  writeEditorTextIfNeeded,
+} from "./pi-compat";
 
 export class BatchAskComponent implements Component {
   private title?: string;

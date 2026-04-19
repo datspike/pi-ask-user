@@ -4,9 +4,9 @@
  * Refactored to keep entrypoint/orchestration separate from overlay components.
  */
 
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { Text, type Component, type KeybindingsManager, type TUI } from "@mariozechner/pi-tui";
+import { Text } from "@mariozechner/pi-tui";
 import {
   type AskParams,
   type AskResponse,
@@ -35,19 +35,7 @@ import { AskComponent } from "./ask-component";
 import { BatchAskComponent } from "./batch-ask-component";
 import { FREEFORM_SENTINEL } from "./ask-overlay-ui";
 import type { QuestionOption } from "./single-select-layout";
-
-const ASK_OVERLAY_WIDTH = "92%";
-const ASK_OVERLAY_MIN_WIDTH = 40;
-const ASK_OVERLAY_OPTIONS = {
-  overlay: true,
-  overlayOptions: {
-    anchor: "center",
-    width: ASK_OVERLAY_WIDTH,
-    minWidth: ASK_OVERLAY_MIN_WIDTH,
-    maxHeight: "85%",
-    margin: 1,
-  },
-} as const;
+import { showAskOverlay } from "./pi-compat";
 
 const BATCH_SKIP_SENTINEL = "Skip this question";
 
@@ -61,54 +49,6 @@ function formatBatchPrompt(
   const titleLine = title ? `${title}\n\n` : "";
   const contextLine = context ? `\n\nContext:\n${context}` : "";
   return `${titleLine}[${index + 1}/${total}] ${question.question}${contextLine}`;
-}
-
-function bindOverlayLifecycle<Result>(
-  signal: AbortSignal | undefined,
-  timeout: number | undefined,
-  done: (result: Result | null) => void,
-): () => void {
-  let cleanedUp = false;
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-  const onAbort = () => done(null);
-  if (signal) {
-    signal.addEventListener("abort", onAbort, { once: true });
-  }
-  if (timeout && timeout > 0) {
-    timeoutId = setTimeout(() => done(null), timeout);
-  }
-
-  return () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    if (signal) {
-      signal.removeEventListener("abort", onAbort);
-    }
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  };
-}
-
-async function showAskOverlay<Result>(
-  custom: Function,
-  signal: AbortSignal | undefined,
-  timeout: number | undefined,
-  factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: Result | null) => void) => Component,
-): Promise<Result | null | undefined> {
-  return custom<Result | null>(
-    (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: Result | null) => void) => {
-      let cleanup = () => {};
-      const finish = (result: Result | null) => {
-        cleanup();
-        done(result);
-      };
-      cleanup = bindOverlayLifecycle(signal, timeout, finish);
-      return factory(tui, theme, keybindings, finish);
-    },
-    ASK_OVERLAY_OPTIONS,
-  );
 }
 
 async function askSingleViaDialogs(

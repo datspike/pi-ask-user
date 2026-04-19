@@ -38,6 +38,7 @@
     "ask-user-core.ts",
     "ask-overlay-controller.ts",
     "ask-overlay-ui.ts",
+    "pi-compat.ts",
     "ask-component.ts",
     "batch-ask-component.ts",
     "single-select-layout.ts",

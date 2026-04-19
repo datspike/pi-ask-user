@@ -1,4 +1,4 @@
-import { getMarkdownTheme, type Theme } from "@mariozechner/pi-coding-agent";
+import type { Theme } from "@mariozechner/pi-coding-agent";
 import {
   type Component,
   decodeKittyPrintable,
@@ -13,10 +13,9 @@ import {
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
 import { renderSingleSelectRows, type QuestionOption } from "./single-select-layout";
+import { ASK_USER_VERSION, getOptionalMarkdownTheme } from "./pi-compat";
 
-import { createRequire } from "node:module";
-const _require = createRequire(import.meta.url);
-export const ASK_USER_VERSION: string = (_require("./package.json") as { version: string }).version;
+export { ASK_USER_VERSION };
 
 export const BOX_BORDER_LEFT = "│ ";
 export const BOX_BORDER_RIGHT = " │";
@@ -548,10 +547,7 @@ export class WrappedSingleSelectList implements Component {
   private buildPreviewLines(width: number, maxLines: number): string[] {
     if (maxLines <= 0) return [];
 
-    let mdTheme: MarkdownTheme | undefined;
-    try {
-      mdTheme = getMarkdownTheme();
-    } catch {}
+    const mdTheme: MarkdownTheme | undefined = getOptionalMarkdownTheme();
 
     let md = "";
 

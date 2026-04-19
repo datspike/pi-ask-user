@@ -7,6 +7,13 @@ import {
   createSelectionResponse,
 } from "./ask-user-core";
 
+export {
+  readEditorText,
+  setEditorFocus,
+  writeEditorText,
+  writeEditorTextIfNeeded,
+} from "./pi-compat";
+
 type SelectMode = "select";
 
 type PersistedEditorState<EditorMode extends string> = {
@@ -345,30 +352,3 @@ export class BatchAskController {
   }
 }
 
-export function readEditorText(editor: unknown): string | undefined {
-  const getText = (editor as { getText?: () => unknown } | undefined)?.getText;
-  if (typeof getText !== "function") {
-    return undefined;
-  }
-  return String(getText.call(editor) ?? "");
-}
-
-export function writeEditorText(editor: unknown, text: string): void {
-  const setText = (editor as { setText?: (value: string) => void } | undefined)?.setText;
-  if (typeof setText === "function") {
-    setText.call(editor, text);
-  }
-}
-
-export function writeEditorTextIfNeeded(editor: unknown, text: string, shouldWrite: boolean): void {
-  if (!shouldWrite) {
-    return;
-  }
-  writeEditorText(editor, text);
-}
-
-export function setEditorFocus(editor: unknown, focused: boolean): void {
-  if (editor && typeof editor === "object") {
-    (editor as { focused?: boolean }).focused = focused;
-  }
-}

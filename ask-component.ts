@@ -1,4 +1,4 @@
-import { getMarkdownTheme, type Theme } from "@mariozechner/pi-coding-agent";
+import type { Theme } from "@mariozechner/pi-coding-agent";
 import {
   Container,
   type Component,
@@ -15,13 +15,7 @@ import {
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
 import { type AskUIResult, createFreeformResponse, createSelectionResponse } from "./ask-user-core";
-import {
-  readEditorText,
-  setEditorFocus,
-  SingleAskController,
-  writeEditorText,
-  writeEditorTextIfNeeded,
-} from "./ask-overlay-controller";
+import { SingleAskController } from "./ask-overlay-controller";
 import {
   ASK_OVERLAY_MAX_HEIGHT_RATIO,
   ASK_USER_VERSION,
@@ -36,6 +30,13 @@ import {
   MultiSelectList,
   WrappedSingleSelectList,
 } from "./ask-overlay-ui";
+import {
+  getOptionalMarkdownTheme,
+  readEditorText,
+  setEditorFocus,
+  writeEditorText,
+  writeEditorTextIfNeeded,
+} from "./pi-compat";
 import type { QuestionOption } from "./single-select-layout";
 
 export class AskComponent extends Container {
@@ -116,10 +117,7 @@ export class AskComponent extends Container {
 
     if (this.context) {
       this.addChild(new Spacer(1));
-      let mdTheme: MarkdownTheme | undefined;
-      try {
-        mdTheme = getMarkdownTheme();
-      } catch {}
+      const mdTheme: MarkdownTheme | undefined = getOptionalMarkdownTheme();
       this.contextComponent = mdTheme ? new Markdown("", 1, 0, mdTheme) : new Text("", 1, 0);
       this.addChild(this.contextComponent);
     }
