@@ -39,6 +39,14 @@ class MockEditor {
       }
       if (data === "enter") {
          this.onSubmit?.(editorText);
+         return;
+      }
+      if (data === "backspace") {
+         editorText = editorText.slice(0, -1);
+         return;
+      }
+      if (typeof data === "string" && data.length === 1 && data.charCodeAt(0) >= 32) {
+         editorText += data;
       }
    }
    getText() {
@@ -100,7 +108,12 @@ beforeAll(() => {
       Text: MockText,
       truncateToWidth: (text: string) => text,
       wrapTextWithAnsi: (text: string) => [text],
-      decodeKittyPrintable: (data: string) => (data.length === 1 ? data : undefined),
+      decodeKittyPrintable: (data: string) => {
+         if (data === "kitty-backspace") {
+            return "\x7f";
+         }
+         return data.length === 1 ? data : undefined;
+      },
       fuzzyFilter: <T>(items: T[], query: string, getText: (item: T) => string) => {
          const normalized = query.trim().toLowerCase();
          if (!normalized) return items;
@@ -631,6 +644,89 @@ describe("ask_user", () => {
       expect(result.details.cancelled).toBe(false);
    });
 
+   test("does not open freeform for kitty-style backspace in single-select mode", async () => {
+      const tool = await setupTool();
+      let controllerMode = "";
+      let hasSingleSelectList = false;
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            question: "Which option should we use?",
+            options: ["Alpha", "Beta"],
+            allowFreeform: true,
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     () => { },
+                  );
+
+                  component.handleInput("kitty-backspace");
+                  controllerMode = (component as any).controller.mode;
+                  hasSingleSelectList = Boolean((component as any).singleSelectList);
+                  return null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(controllerMode).toBe("select");
+      expect(hasSingleSelectList).toBe(true);
+   });
+
+   test("returns to the option list when a selectable single-question freeform draft becomes empty", async () => {
+      const tool = await setupTool();
+      editorText = "";
+      let controllerMode = "";
+      let hasSingleSelectList = false;
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            question: "Which option should we use?",
+            options: ["Alpha", "Beta"],
+            allowFreeform: true,
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     () => { },
+                  );
+
+                  component.handleInput("x");
+                  expect(editorText).toBe("x");
+                  component.handleInput("backspace");
+                  component.handleInput("backspace");
+                  controllerMode = (component as any).controller.mode;
+                  hasSingleSelectList = Boolean((component as any).singleSelectList);
+                  return null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(controllerMode).toBe("select");
+      expect(hasSingleSelectList).toBe(true);
+      expect(editorText).toBe("");
+   });
+
    test("shows the remapped cancel key in freeform help text", async () => {
       const tool = await setupTool();
       let helpText = "";
@@ -988,56 +1084,64 @@ describe("ask_user", () => {
    test("completes a batch clarification flow in the overlay", async () => {
       const tool = await setupTool();
       let rendered = "";
+      const originalDateNow = Date.now;
+      let now = 1_000;
+      Date.now = () => now;
 
-      const result = await tool.execute(
-         "tool-call-id",
-         {
-            mode: "batch",
-            title: "Clarify scope",
-            context: "Need a few details before implementation.",
-            questions: [
-               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
-               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
-            ],
-         },
-         undefined,
-         undefined,
-         {
-            hasUI: true,
-            ui: {
-               custom: async (factory: any) => {
-                  let resolved: any;
-                  const component = factory(
-                     { requestRender() { }, terminal: { rows: 24 } },
-                     createTheme(),
-                     createKeybindings(),
-                     (value: any) => {
-                        resolved = value;
-                     },
-                  );
+      try {
+         const result = await tool.execute(
+            "tool-call-id",
+            {
+               mode: "batch",
+               title: "Clarify scope",
+               context: "Need a few details before implementation.",
+               questions: [
+                  { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+                  { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
+               ],
+            },
+            undefined,
+            undefined,
+            {
+               hasUI: true,
+               ui: {
+                  custom: async (factory: any) => {
+                     let resolved: any;
+                     const component = factory(
+                        { requestRender() { }, terminal: { rows: 24 } },
+                        createTheme(),
+                        createKeybindings(),
+                        (value: any) => {
+                           resolved = value;
+                        },
+                     );
 
-                  component.handleInput("enter");
-                  rendered = component.render(100).join("\n");
-                  component.handleInput("enter");
-                  component.handleInput("ctrl+s");
-                  return resolved ?? null;
+                     component.handleInput("enter");
+                     rendered = component.render(100).join("\n");
+                     now = 1_300;
+                     component.handleInput("enter");
+                     component.handleInput("ctrl+s");
+                     return resolved ?? null;
+                  },
                },
             },
-         },
-      );
+         );
 
-      expect(result.isError).not.toBe(true);
-      expect(result.details.mode).toBe("batch");
-      expect(result.details.response).toEqual({
-         kind: "batch",
-         answers: [
-            { id: "surface", kind: "selection", selections: ["Overlay"] },
-            { id: "compat", kind: "selection", selections: ["Yes"] },
-         ],
-      });
-      expect(rendered).toContain("Questions (2/2)");
-      expect(rendered).toContain("1. Which surface is in scope?");
-      expect(rendered).toContain("2. Must the current behavior stay exact?");
+         expect(result.isError).not.toBe(true);
+         expect(result.details.mode).toBe("batch");
+         expect(result.details.response).toEqual({
+            kind: "batch",
+            answers: [
+               { id: "surface", kind: "selection", selections: ["Overlay"] },
+               { id: "compat", kind: "selection", selections: ["Yes"] },
+            ],
+         });
+         expect(rendered).toContain("Questions (2/2)");
+         expect(rendered).toContain("1. Which surface is in scope?");
+         expect(rendered).toContain("2. Must the current behavior stay exact?");
+      } finally {
+         Date.now = originalDateNow;
+      }
    });
 
    test("pressing enter on the last batch multi-select question saves and submits the batch", async () => {
@@ -1089,6 +1193,67 @@ describe("ask_user", () => {
             { id: "targets", kind: "selection", selections: ["Four"] },
          ],
       });
+   });
+
+   test("ignores immediate enter autorepeat between consecutive batch select questions", async () => {
+      const tool = await setupTool();
+      let renderedAfterRepeatedEnter = "";
+      const originalDateNow = Date.now;
+      let now = 1_000;
+      Date.now = () => now;
+
+      try {
+         const result = await tool.execute(
+            "tool-call-id",
+            {
+               mode: "batch",
+               title: "Clarify scope",
+               questions: [
+                  { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
+                  { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"], required: false },
+               ],
+            },
+            undefined,
+            undefined,
+            {
+               hasUI: true,
+               ui: {
+                  custom: async (factory: any) => {
+                     let resolved: any;
+                     const component = factory(
+                        { requestRender() { }, terminal: { rows: 24 } },
+                        createTheme(),
+                        createKeybindings(),
+                        (value: any) => {
+                           resolved = value;
+                        },
+                     );
+
+                     component.handleInput("enter");
+                     now = 1_100;
+                     component.handleInput("enter");
+                     renderedAfterRepeatedEnter = component.render(100).join("\n");
+                     component.handleInput("down");
+                     component.handleInput("enter");
+                     return resolved ?? null;
+                  },
+               },
+            },
+         );
+
+         expect(result.isError).not.toBe(true);
+         expect(result.details.response).toEqual({
+            kind: "batch",
+            answers: [
+               { id: "surface", kind: "selection", selections: ["Overlay"] },
+               { id: "compat", kind: "selection", selections: ["No"] },
+            ],
+         });
+         expect(renderedAfterRepeatedEnter).toContain("Questions (2/2)");
+         expect(renderedAfterRepeatedEnter).toContain("2. Must the current behavior stay exact? — optional");
+      } finally {
+         Date.now = originalDateNow;
+      }
    });
 
    test("supports left and right arrow navigation between batch questions without losing saved answers", async () => {
@@ -1198,6 +1363,100 @@ describe("ask_user", () => {
       });
       expect(renderedOnReturn).toContain("Questions (1/2)");
       expect(renderedOnReturn).toContain("Anything else I should optimize for? — Keep the existing keyboard flow.");
+   });
+
+   test("does not open freeform for kitty-style backspace in batch select mode", async () => {
+      const tool = await setupTool();
+      let controllerMode = "";
+      let rendered = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"], allowFreeform: true, required: true },
+               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"], required: false },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     () => { },
+                  );
+
+                  component.handleInput("kitty-backspace");
+                  controllerMode = (component as any).controller.mode;
+                  rendered = component.render(100).join("\n");
+                  return null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(controllerMode).toBe("select");
+      expect(rendered).toContain("Q1. Which surface is in scope?");
+      expect(rendered).toContain("Overlay");
+      expect(rendered).toContain("Fallback");
+   });
+
+   test("returns to the option list when a selectable batch freeform draft becomes empty", async () => {
+      const tool = await setupTool();
+      let rendered = "";
+      editorText = "";
+      let controllerMode = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"], allowFreeform: true, required: true },
+               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"], required: false },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     () => { },
+                  );
+
+                  component.handleInput("x");
+                  expect(editorText).toBe("x");
+                  component.handleInput("backspace");
+                  component.handleInput("backspace");
+                  controllerMode = (component as any).controller.mode;
+                  rendered = component.render(100).join("\n");
+                  return null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(controllerMode).toBe("select");
+      expect(rendered).not.toContain("Answer");
+      expect(rendered).toContain("Q1. Which surface is in scope?");
+      expect(rendered).toContain("Overlay");
+      expect(rendered).toContain("Fallback");
+      expect(editorText).toBe("");
    });
 
    test("does not create a batch freeform answer when arrow navigation leaves an empty editor", async () => {

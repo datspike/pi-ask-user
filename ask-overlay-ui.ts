@@ -133,6 +133,21 @@ export function matchesAnyKey(data: string, keys: string[]): boolean {
   return keys.some((key) => matchesKey(data, key));
 }
 
+function isPrintableTextInputCharacter(character: string): boolean {
+  const characters = [...character];
+  if (characters.length !== 1) {
+    return false;
+  }
+
+  const [value] = characters;
+  if (!value) {
+    return false;
+  }
+
+  const code = value.charCodeAt(0);
+  return code >= 32 && code !== 0x7f && !(code >= 0x80 && code <= 0x9f);
+}
+
 export class MultiSelectList implements Component {
   private options: QuestionOption[];
   private allowFreeform: boolean;
@@ -218,20 +233,11 @@ export class MultiSelectList implements Component {
 
   private getPrintableInput(data: string): string | null {
     const kittyPrintable = decodeKittyPrintable(data);
-    if (kittyPrintable !== undefined) return kittyPrintable;
-
-    const characters = [...data];
-    if (characters.length !== 1) return null;
-
-    const [character] = characters;
-    if (!character) return null;
-
-    const code = character.charCodeAt(0);
-    if (code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
-      return null;
+    if (kittyPrintable !== undefined) {
+      return isPrintableTextInputCharacter(kittyPrintable) ? kittyPrintable : null;
     }
 
-    return character;
+    return isPrintableTextInputCharacter(data) ? data : null;
   }
 
   handleInput(data: string): void {
@@ -466,20 +472,11 @@ export class WrappedSingleSelectList implements Component {
 
   private getPrintableInput(data: string): string | null {
     const kittyPrintable = decodeKittyPrintable(data);
-    if (kittyPrintable !== undefined) return kittyPrintable;
-
-    const characters = [...data];
-    if (characters.length !== 1) return null;
-
-    const [character] = characters;
-    if (!character) return null;
-
-    const code = character.charCodeAt(0);
-    if (code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
-      return null;
+    if (kittyPrintable !== undefined) {
+      return isPrintableTextInputCharacter(kittyPrintable) ? kittyPrintable : null;
     }
 
-    return character;
+    return isPrintableTextInputCharacter(data) ? data : null;
   }
 
   private styleListLine(line: string, width: number, isSelected: boolean): string {

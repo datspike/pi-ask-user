@@ -41,6 +41,8 @@ import {
   writeEditorTextIfNeeded,
 } from "./pi-compat";
 
+const BATCH_CONFIRM_AUTOREPEAT_WINDOW_MS = 250;
+
 export class BatchAskComponent implements Component {
   private title?: string;
   private context?: string;
@@ -54,6 +56,7 @@ export class BatchAskComponent implements Component {
   private multiSelectList?: MultiSelectList;
   private editor?: Editor;
   private _focused = false;
+  private lastSelectConfirmAt?: number;
 
   constructor(
     title: string | undefined,
@@ -195,6 +198,7 @@ export class BatchAskComponent implements Component {
 
   private handleSelectionSubmit(selections: string[]): void {
     const result = this.controller.saveSelectionAnswer(selections);
+    this.lastSelectConfirmAt = Date.now();
     if (result) {
       this.onDone(result);
       return;
@@ -239,8 +243,35 @@ export class BatchAskComponent implements Component {
 
   private showSelectMode(): void {
     this.controller.enterSelect(this.currentEditorText());
+    if (this.editor) {
+      writeEditorText(this.editor, "");
+      setEditorFocus(this.editor, false);
+    }
     this.invalidate();
     this.tui.requestRender();
+  }
+
+  private maybeReturnToSelectModeAfterEmptyFreeform(previousText: string | undefined): boolean {
+    if (this.controller.mode !== "freeform") {
+      return false;
+    }
+
+    const currentQuestion = this.getCurrentQuestion();
+    if (currentQuestion.options.length === 0) {
+      return false;
+    }
+
+    if (!previousText || previousText.length === 0) {
+      return false;
+    }
+
+    const currentText = this.currentEditorText() ?? "";
+    if (currentText.length > 0) {
+      return false;
+    }
+
+    this.showSelectMode();
+    return true;
   }
 
   private submitBatch(): void {
@@ -258,6 +289,30 @@ export class BatchAskComponent implements Component {
     }
     this.invalidate();
     this.tui.requestRender();
+  }
+
+  private shouldIgnoreSelectConfirmAutorepeat(data: string): boolean {
+    if (!this.keybindings.matches(data, "tui.select.confirm")) {
+      this.lastSelectConfirmAt = undefined;
+      return false;
+    }
+
+    if (this.controller.mode === "freeform") {
+      this.lastSelectConfirmAt = undefined;
+      return false;
+    }
+
+    const currentQuestion = this.getCurrentQuestion();
+    if (currentQuestion.options.length === 0) {
+      this.lastSelectConfirmAt = undefined;
+      return false;
+    }
+
+    if (this.lastSelectConfirmAt === undefined) {
+      return false;
+    }
+
+    return Date.now() - this.lastSelectConfirmAt < BATCH_CONFIRM_AUTOREPEAT_WINDOW_MS;
   }
 
   private buildHelpText(): string {
@@ -297,17 +352,24 @@ export class BatchAskComponent implements Component {
 
   handleInput(data: string): void {
     if (matchesKey(data, BATCH_SUBMIT_KEY)) {
+      this.lastSelectConfirmAt = undefined;
       this.submitBatch();
       return;
     }
 
     if (matchesKey(data, BATCH_NEXT_KEY) || matchesAnyKey(data, BATCH_NEXT_ARROW_KEYS)) {
+      this.lastSelectConfirmAt = undefined;
       this.moveNext();
       return;
     }
 
     if (matchesKey(data, BATCH_PREVIOUS_KEY) || matchesAnyKey(data, BATCH_PREVIOUS_ARROW_KEYS)) {
+      this.lastSelectConfirmAt = undefined;
       this.movePrevious();
+      return;
+    }
+
+    if (this.shouldIgnoreSelectConfirmAutorepeat(data)) {
       return;
     }
 
@@ -322,7 +384,11 @@ export class BatchAskComponent implements Component {
         return;
       }
 
+      const previousText = this.currentEditorText();
       this.ensureEditor().handleInput(data);
+      if (this.maybeReturnToSelectModeAfterEmptyFreeform(previousText)) {
+        return;
+      }
       this.tui.requestRender();
       return;
     }

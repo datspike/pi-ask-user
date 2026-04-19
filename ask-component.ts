@@ -315,8 +315,30 @@ export class AskComponent extends Container {
     this.onDone(this.controller.submitEditor(text));
   }
 
+  private maybeReturnToSelectModeAfterEmptyFreeform(previousText: string | undefined): boolean {
+    if (this.controller.mode !== "freeform" || this.options.length === 0) {
+      return false;
+    }
+
+    if (!previousText || previousText.length === 0) {
+      return false;
+    }
+
+    const currentText = this.currentEditorText() ?? "";
+    if (currentText.length > 0) {
+      return false;
+    }
+
+    this.showSelectMode();
+    return true;
+  }
+
   private showSelectMode(): void {
     this.controller.enterSelect(this.currentEditorText());
+    if (this.editor) {
+      writeEditorText(this.editor, "");
+      setEditorFocus(this.editor, false);
+    }
     this.modeContainer.clear();
     this.modeContainer.addChild(this.allowMultiple ? this.ensureMultiSelectList() : this.ensureSingleSelectList());
     this.updateHelpText();
@@ -372,7 +394,11 @@ export class AskComponent extends Container {
         return;
       }
 
+      const previousText = this.controller.mode === "freeform" ? this.currentEditorText() : undefined;
       this.ensureEditor().handleInput(data);
+      if (this.maybeReturnToSelectModeAfterEmptyFreeform(previousText)) {
+        return;
+      }
       this.tui.requestRender();
       return;
     }
