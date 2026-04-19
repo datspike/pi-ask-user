@@ -18,7 +18,6 @@ import { type AskUIResult, createFreeformResponse, createSelectionResponse } fro
 import { SingleAskController } from "./ask-overlay-controller";
 import {
   ASK_OVERLAY_MAX_HEIGHT_RATIO,
-  ASK_USER_VERSION,
   BOX_BORDER_LEFT,
   BOX_BORDER_OVERHEAD,
   BOX_BORDER_RIGHT,
@@ -31,6 +30,7 @@ import {
   WrappedSingleSelectList,
 } from "./ask-overlay-ui";
 import {
+  ASK_USER_VERSION,
   getOptionalMarkdownTheme,
   readEditorText,
   setEditorFocus,

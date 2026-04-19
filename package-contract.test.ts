@@ -39,13 +39,21 @@ describe("package contract", () => {
     }
   });
 
-  test("preserves compatibility exports for published internal modules", async () => {
+  test("keeps runtime helper exports in pi-compat instead of internal re-exports", async () => {
+    const compatModule = await import("./pi-compat");
     const controllerModule = await import("./ask-overlay-controller");
+    const uiModule = await import("./ask-overlay-ui");
 
-    expect(typeof controllerModule.readEditorText).toBe("function");
-    expect(typeof controllerModule.writeEditorText).toBe("function");
-    expect(typeof controllerModule.writeEditorTextIfNeeded).toBe("function");
-    expect(typeof controllerModule.setEditorFocus).toBe("function");
+    expect(typeof compatModule.readEditorText).toBe("function");
+    expect(typeof compatModule.writeEditorText).toBe("function");
+    expect(typeof compatModule.writeEditorTextIfNeeded).toBe("function");
+    expect(typeof compatModule.setEditorFocus).toBe("function");
+
+    expect("readEditorText" in controllerModule).toBe(false);
+    expect("writeEditorText" in controllerModule).toBe(false);
+    expect("writeEditorTextIfNeeded" in controllerModule).toBe(false);
+    expect("setEditorFocus" in controllerModule).toBe(false);
+    expect("ASK_USER_VERSION" in uiModule).toBe(false);
   });
 
   test("registers the ask_user tool from the package entrypoint", async () => {

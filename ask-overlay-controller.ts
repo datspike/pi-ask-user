@@ -7,13 +7,6 @@ import {
   createSelectionResponse,
 } from "./ask-user-core";
 
-export {
-  readEditorText,
-  setEditorFocus,
-  writeEditorText,
-  writeEditorTextIfNeeded,
-} from "./pi-compat";
-
 type SelectMode = "select";
 
 type PersistedEditorState<EditorMode extends string> = {

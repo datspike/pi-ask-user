@@ -13,9 +13,7 @@ import {
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
 import { renderSingleSelectRows, type QuestionOption } from "./single-select-layout";
-import { ASK_USER_VERSION, getOptionalMarkdownTheme } from "./pi-compat";
-
-export { ASK_USER_VERSION };
+import { getOptionalMarkdownTheme } from "./pi-compat";
 
 export const BOX_BORDER_LEFT = "│ ";
 export const BOX_BORDER_RIGHT = " │";

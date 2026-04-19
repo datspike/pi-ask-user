@@ -16,7 +16,6 @@ import {
 } from "./ask-user-core";
 import { BatchAskController } from "./ask-overlay-controller";
 import {
-  ASK_USER_VERSION,
   BATCH_NEXT_ARROW_KEYS,
   BATCH_NEXT_KEY,
   BATCH_PREVIOUS_ARROW_KEYS,
@@ -35,6 +34,7 @@ import {
   WrappedSingleSelectList,
 } from "./ask-overlay-ui";
 import {
+  ASK_USER_VERSION,
   readEditorText,
   setEditorFocus,
   writeEditorText,
