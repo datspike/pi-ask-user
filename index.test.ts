@@ -1146,6 +1146,173 @@ describe("ask_user", () => {
       expect(renderedOnReturn).toContain("Overlay");
    });
 
+   test("commits a non-empty batch freeform draft when arrow navigation leaves the question", async () => {
+      const tool = await setupTool();
+      let renderedOnReturn = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "notes", question: "Anything else I should optimize for?", options: [], allowMultiple: false, allowFreeform: true, required: false },
+               { id: "compat", question: "Must the current behavior stay exact?", options: [], allowMultiple: false, allowFreeform: true, required: false },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: any;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: any) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.render(100);
+                  editorText = "Keep the existing keyboard flow.";
+                  component.handleInput("right");
+                  component.handleInput("left");
+                  renderedOnReturn = component.render(100).join("\n");
+                  component.handleInput("ctrl+s");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.response).toEqual({
+         kind: "batch",
+         answers: [
+            { id: "notes", kind: "freeform", text: "Keep the existing keyboard flow." },
+            { id: "compat", kind: "skipped" },
+         ],
+      });
+      expect(renderedOnReturn).toContain("Questions (1/2)");
+      expect(renderedOnReturn).toContain("Anything else I should optimize for? — Keep the existing keyboard flow.");
+   });
+
+   test("does not create a batch freeform answer when arrow navigation leaves an empty editor", async () => {
+      const tool = await setupTool();
+      let renderedOnReturn = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "notes", question: "Anything else I should optimize for?", options: [], allowMultiple: false, allowFreeform: true, required: false },
+               { id: "compat", question: "Must the current behavior stay exact?", options: [], allowMultiple: false, allowFreeform: true, required: false },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: any;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: any) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.render(100);
+                  editorText = "";
+                  component.handleInput("right");
+                  component.handleInput("left");
+                  renderedOnReturn = component.render(100).join("\n");
+                  component.handleInput("ctrl+s");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.response).toEqual({
+         kind: "batch",
+         answers: [
+            { id: "notes", kind: "skipped" },
+            { id: "compat", kind: "skipped" },
+         ],
+      });
+      expect(renderedOnReturn).toContain("Questions (1/2)");
+      expect(renderedOnReturn).toContain("Anything else I should optimize for? — optional");
+      expect(renderedOnReturn).not.toContain("Keep the existing keyboard flow.");
+   });
+
+   test("keeps an existing batch selection answer when an empty freeform draft is abandoned", async () => {
+      const tool = await setupTool();
+      let renderedOnReturn = "";
+
+      const result = await tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            title: "Clarify scope",
+            questions: [
+               { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"], allowFreeform: true, required: true },
+               { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"], required: false },
+            ],
+         },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  let resolved: any;
+                  const component = factory(
+                     { requestRender() { }, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     (value: any) => {
+                        resolved = value;
+                     },
+                  );
+
+                  component.handleInput("enter");
+                  component.handleInput("right");
+                  component.handleInput("left");
+                  component.handleInput("x");
+                  expect(editorText).toBe("x");
+                  editorText = "";
+                  component.handleInput("right");
+                  component.handleInput("left");
+                  renderedOnReturn = component.render(100).join("\n");
+                  component.handleInput("ctrl+s");
+                  return resolved ?? null;
+               },
+            },
+         },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(result.details.response).toEqual({
+         kind: "batch",
+         answers: [
+            { id: "surface", kind: "selection", selections: ["Overlay"] },
+            { id: "compat", kind: "skipped" },
+         ],
+      });
+      expect(renderedOnReturn).toContain("Which surface is in scope? — Overlay");
+      expect(renderedOnReturn).not.toContain("Which surface is in scope? — pending");
+   });
+
    test("shows arrow-key hints in the batch overlay help text", async () => {
       const tool = await setupTool();
       let rendered = "";

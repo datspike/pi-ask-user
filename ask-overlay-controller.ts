@@ -227,7 +227,7 @@ export class BatchAskController {
   }
 
   public goToQuestion(index: number, currentEditorText?: string): void {
-    this.persistCurrentFreeformDraft(currentEditorText);
+    this.commitCurrentFreeformInput(currentEditorText);
     this.currentIndex = Math.max(0, Math.min(index, this.questions.length - 1));
     this.restoreModeForCurrentQuestion();
   }
@@ -284,7 +284,7 @@ export class BatchAskController {
   }
 
   public submitBatch(currentEditorText?: string): AskUIResult | null {
-    this.persistCurrentFreeformDraft(currentEditorText);
+    this.commitCurrentFreeformInput(currentEditorText);
 
     const missingRequiredIndex = this.getMissingRequiredIndex();
     if (missingRequiredIndex >= 0) {
@@ -311,12 +311,24 @@ export class BatchAskController {
     this.editorState.setMode(this.getDefaultMode(this.getCurrentQuestion()));
   }
 
-  private persistCurrentFreeformDraft(currentEditorText?: string): void {
+  private commitCurrentFreeformInput(currentEditorText?: string): void {
     if (this.mode !== "freeform" || typeof currentEditorText !== "string") {
       return;
     }
 
-    this.editorState.setDraft(this.getCurrentQuestion().id, "freeform", currentEditorText);
+    const questionId = this.getCurrentQuestion().id;
+    const response = createFreeformResponse(currentEditorText);
+    if (response) {
+      this.answers.set(questionId, response);
+      this.editorState.setDraft(questionId, "freeform", response.text);
+      return;
+    }
+
+    const existingAnswer = this.answers.get(questionId);
+    if (existingAnswer?.kind === "freeform") {
+      this.answers.delete(questionId);
+    }
+    this.editorState.clearDraft(questionId, "freeform");
   }
 
   private getMissingRequiredIndex(): number {
