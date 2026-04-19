@@ -1,200 +1,66 @@
 ---
 name: ask-user
-description: "You MUST use this before high-stakes architectural decisions, irreversible changes, or when requirements are ambiguous. Runs a decision handshake with the ask_user tool: summarize context, present structured options, collect explicit user choice, then proceed."
+description: Use when implementation needs explicit user alignment at a high-stakes or ambiguous boundary; returns a confirmed decision, a related clarification packet, or a blocked status.
 metadata:
   short-description: Decision gate for ambiguity and high-stakes choices
 ---
 
 # Ask User Decision Gate
 
-Use this skill to force explicit user alignment before consequential decisions.
+## Workflow
+1. Classify the current boundary as `high_stakes`, `ambiguous`, `both`, or `clear`.
+2. If the boundary is `clear`, do not call `ask_user`.
+3. Gather evidence first with available tools; do not ask the user to decide blind.
+4. Synthesize a short neutral `context` summary covering current state, constraints, trade-offs, and any recommendation.
+5. Choose one shape:
+   - Single mode for one high-stakes, preference-sensitive, or ambiguous decision boundary.
+   - `mode: "batch"` when several related clarifications are already known up front and can be answered in one pass.
+6. Keep batch mode to one topic, 2-7 non-branching questions, and do not split one known clarification packet into repeated pauses unless later questions genuinely depend on earlier answers.
+7. Ask concrete, outcome-oriented questions; keep `allowFreeform` on unless there is a good reason not to.
+8. After the tool returns, restate the answer text in plain language, state the next action, and proceed only within that scope.
 
-This skill is about **decision control**, not general chit-chat.
+## Trigger guide
 
-## Non-negotiable rule
+| Scenario | Ask? | Preferred shape |
+|---|---:|---|
+| Architecture, schema, API, deploy, or security trade-off | Yes | Single |
+| Costly-to-reverse behavior change or migration | Yes | Single |
+| Requirements conflict or ambiguity | Yes | Single or batch |
+| Several related clarifications already known up front | Yes | Batch |
+| Non-trivial scope cut or prioritization | Yes | Single or batch |
+| Purely local refactor with identical behavior | Usually no | — |
+| Formatting-only edits | No | — |
 
-Invoke `ask_user` before proceeding when **any** of the following is true:
+## Checkpoints
+- `ask_user` is required before proceeding when the next step changes architecture, schema, API contracts, deployment strategy, security posture, or another costly-to-reverse behavior.
+- `ask_user` is required when requirements, constraints, or success criteria are unclear, conflicting, or missing.
+- `ask_user` is required when multiple valid options exist and the trade-off depends on user preference.
+- Use at most 1 `ask_user` call per decision boundary in normal cases.
+- Use at most 2 attempts for the same boundary if the first result is unclear or cancelled; a single batch clarification call counts as one attempt.
+- Do not use batch mode for unrelated questions, branching interviews, or a single go/no-go decision.
+- Avoid using `ask_user` for trivial formatting choices or questions that should be resolved by reading code or docs first.
 
-1. The next step changes architecture, schema, API contracts, deployment strategy, or security posture.
-2. The work is costly to undo (large refactor, migration, destructive edit, production-facing behavior change).
-3. Requirements, constraints, or success criteria are unclear, conflicting, or missing.
-4. Multiple valid options exist and the trade-off is preference-dependent.
-5. You are about to assume something that can materially change implementation.
+## Output
+Return one of these outcomes before leaving the skill:
+- Confirmed decision: restate the chosen option in plain language and name the next implementation step.
+- Clarification packet: restate the collected answers in plain language and name the next implementation step.
+- Blocked: name the unresolved decision and why implementation cannot continue safely.
 
-Do **not** skip this gate unless the user has already provided a clear, explicit decision for the exact trade-off.
+Successful `ask_user` results expose model-visible answer text in plain-text `content`, in addition to structured details.
 
-## Agent Protocol Handshake (required)
+## Safety
+- Preflight: gather evidence before asking and keep the `context` summary neutral.
+- Stop condition: if the boundary is `high_stakes` or `both` and the answer is still unclear after the second attempt, stop and report blocked.
+- Safe fallback: if the boundary is only `ambiguous` and the user explicitly delegates the choice, proceed with the most reversible default and state assumptions clearly.
 
-Follow this handshake in order.
+## Batch notes
+- Batch mode is a lightweight clarification flow, not a generic form engine.
+- Ask batch questions together when they are already known up front and can be answered in one pass.
+- Keep batch questions independent enough to answer in one pass.
+- In the interactive overlay, the user can move across questions and type direct freeform answers where allowed.
 
-### 1) Detect boundary
-Classify the current step as:
-- `high_stakes`
-- `ambiguous`
-- `both`
-- `clear` (no gate needed)
-
-If classification is not `clear`, continue.
-
-### 2) Gather evidence first
-Before asking, gather context from available tools (`read`, `bash`, `exa`, `ref`, etc.).
-Do not ask the user to decide blind.
-
-### 3) Synthesize context
-Prepare a short neutral summary (3-7 bullets or short paragraph) covering:
-- current state
-- key constraints
-- trade-offs
-- recommendation (if any)
-
-### 4) Ask the right `ask_user` shape
-Default to one decision at a time for a single high-stakes trade-off:
-- `question`: concrete decision prompt
-- `context`: synthesized summary
-- `options`: 2-5 clear choices when possible
-- `allowMultiple`: `false` unless independent selections are genuinely needed
-- `allowFreeform`: usually `true`
-
-When you already know that you need several related clarification answers before implementation, prefer asking them in one `mode: "batch"` call instead of asking them one by one. Use batch mode for one related clarification sweep with 2-7 questions known up front and belonging to one topic. Do not split such a clarification packet into repeated single-question pauses unless later questions genuinely depend on earlier answers.
-
-Use `mode: "batch"` only for clarifications, not for a single high-stakes go/no-go decision, unrelated questions, or branching interviews where later questions depend on earlier answers.
-
-### 5) Commit the decision
-After response:
-- restate the decision or collected clarifications in plain language
-- state what will be done next
-- use the returned answer text directly; successful `ask_user` results include model-visible answers in plain-text `content`
-- proceed with implementation
-
-### 6) Re-open only on new ambiguity
-Ask again only if materially new uncertainty appears.
-Avoid repetitive confirmation loops.
-
-## Anti-overasking guardrails (required)
-
-Apply a strict question budget per decision boundary:
-
-- **Max 1** `ask_user` call per decision boundary in normal cases.
-- **Max 2** `ask_user` calls for the same boundary when first response is unclear/cancelled.
-- A single batch clarification call counts as one `ask_user` call for this budget.
-- Never ask the same trade-off again without new evidence.
-
-Escalation ladder:
-
-1. **Attempt 1:** structured options + concise context.
-2. **Attempt 2 (only if needed):** narrower question with agent recommendation and explicit choices:
-   - `Proceed with recommended option`
-   - `Choose another option` (freeform)
-   - `Stop for now`
-
-After attempt 2:
-
-- If boundary is `high_stakes` or `both`: **stop and mark blocked**. Do not keep asking.
-- If boundary is `ambiguous` only and user says “your call” or equivalent: proceed with the most reversible default and state assumptions explicitly.
-
-## `ask_user` payload quality standard
-
-### Question quality
-Use:
-- “Which option should we adopt for X?”
-- “Do you want A (fast) or B (safer) for Y?”
-
-Avoid:
-- broad/open prompts with no decision boundary
-- multiple unrelated decisions in one single-question prompt
-- unrelated or branching questions in one batch
-- questions that should be answered by reading code/docs first
-
-### Option quality
-Options must be:
-- mutually understandable
-- short and outcome-oriented
-- explicit on trade-offs
-
-Good options include a short description when trade-offs are non-obvious.
-
-## Recommended patterns
-
-### Single-select architecture decision
-
-```json
-{
-  "question": "Which caching strategy should we use for the first release?",
-  "context": "Current API has p95 latency issues. Redis is fastest but adds infra complexity; in-memory cache is simpler but not shared across instances.",
-  "options": [
-    { "title": "In-memory cache", "description": "Simpler rollout, weaker horizontal consistency" },
-    { "title": "Redis cache", "description": "Better consistency and scalability, more ops overhead" }
-  ],
-  "allowMultiple": false,
-  "allowFreeform": true
-}
-```
-
-### Multi-select when decisions are independent
-
-```json
-{
-  "question": "Select the first-wave hardening items to implement now.",
-  "context": "We can ship quickly with baseline controls, then add targeted hardening. Budget is limited to 1-2 days.",
-  "options": [
-    "Rate limiting",
-    "Audit logging",
-    "Input schema validation",
-    "Secrets rotation"
-  ],
-  "allowMultiple": true,
-  "allowFreeform": true
-}
-```
-
-### Batch clarification sweep before implementation
-
-Use this when the needed clarifications are already known up front and can be answered in one pass. The batch overlay supports moving between questions, direct freeform entry where allowed, and finishing from the last question.
-
-```json
-{
-  "mode": "batch",
-  "title": "Clarify implementation scope",
-  "context": "I have enough evidence to proceed, but I still need a few related clarifications.",
-  "questions": [
-    {
-      "id": "surface",
-      "question": "Which surface is in scope?",
-      "options": ["Overlay", "RPC fallback", "Both"],
-      "required": true
-    },
-    {
-      "id": "compat",
-      "question": "Must the current single-question prompts remain unchanged?",
-      "options": ["Yes", "No", "Mostly yes"],
-      "required": true
-    },
-    {
-      "id": "notes",
-      "question": "Anything else I should optimize for?",
-      "required": false
-    }
-  ]
-}
-```
-
-## Anti-patterns
-
-- Asking `ask_user` without first gathering context
-- Using it for trivial formatting choices
-- Forcing options when freeform is clearly better
-- Asking the same question repeatedly without new information
-- Proceeding with high-stakes implementation after unclear/cancelled answer
-
-## If user cancels or answer is unclear
-
-Pause execution and explain what is blocked.
-Use at most one narrower follow-up `ask_user` question (attempt 2).
-After that, do not continue asking in a loop:
-- for high-stakes decisions: remain blocked until explicit decision
-- for ambiguity-only decisions: proceed only if user delegated the choice ("your call")
-
-## Additional reference
-
-For full trigger matrix, UX conventions, and extension interaction details, read:
-- `references/ask-user-skill-extension-spec.md`
+## Quick payload rules
+- Ask one concrete decision in single mode.
+- Prefer 2-5 short, understandable options when options are appropriate.
+- Use batch mode only for 2-7 related clarifications on one topic.
+- Keep `allowFreeform` on unless constrained input is genuinely required.

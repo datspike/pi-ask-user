@@ -1964,15 +1964,15 @@ export default function(pi: ExtensionAPI) {
       name: "ask_user",
       label: "Ask User",
       description:
-         "Ask the user a focused question or a small batch of related clarification questions. Use this to gather information interactively. Preserve single-question asks for decision gates; use batch mode only for one related clarification pass after gathering context.",
+         "Ask the user one focused question or one batch of 2-7 related clarifications after gathering context. Use single mode for one decision gate; use batch mode when several related clarifications are already known up front.",
       promptSnippet:
-         "Ask the user a focused question or a small batch of related clarification questions to gather information interactively",
+         "Ask the user one focused question or one batch of related clarifications after gathering context",
       promptGuidelines: [
-         "Before calling ask_user, gather context with tools (read/web/ref) and pass a short summary via the context field.",
-         "Use ask_user when the user's intent is ambiguous, when a decision requires explicit user input, or when multiple valid options exist.",
-         "Default to a single focused question per ask_user call.",
-         "Use batch mode only for 2-7 related clarification questions that are known up front and belong to one topic.",
-         "Do not use batch mode for unrelated questions or branching interviews where later questions depend on earlier answers.",
+         "Before calling ask_user, gather evidence with tools and pass a short neutral summary via the context field.",
+         "Use single mode for one high-stakes, preference-sensitive, or ambiguous decision boundary.",
+         "If several related clarifications are already known up front, prefer one batch call instead of repeated single-question pauses.",
+         "Keep batch mode to one topic, 2-7 questions, and non-branching questions whose later answers do not depend on earlier ones.",
+         "After ask_user returns, use the answer text in content to restate the outcome and proceed or report blocked status.",
       ],
       parameters: Type.Object({
          mode: Type.Optional(Type.String({ description: "Mode for ask_user. Omit or use 'single' for the default single-question flow. Use 'batch' for a related clarification packet." })),

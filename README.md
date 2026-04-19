@@ -37,11 +37,11 @@ This package now ships a skill at `skills/ask-user/SKILL.md` that nudges/mandate
 The skill follows a "decision handshake" flow:
 
 1. Gather evidence and summarize context
-2. Use single-question `ask_user` for one decision gate, or batch mode to ask several related clarification questions in one sweep when they are already known up front
+2. Use single-question `ask_user` for one decision gate, or batch mode to ask several related clarification questions in one sweep when they are already known up front and can be answered in one pass
 3. Wait for explicit user choice
 4. Confirm the decision, then proceed
 
-See: `skills/ask-user/references/ask-user-skill-extension-spec.md`.
+The bundled skill is self-contained in `skills/ask-user/SKILL.md`.
 
 ## Install
 
@@ -94,8 +94,9 @@ interface BatchQuestion {
 ```
 
 Batch-mode notes:
-- Use it only for one related clarification pass, not unrelated or branching interviews.
+- Use it only for one related clarification pass, not unrelated questions, branching interviews, or a single go/no-go decision.
 - If you already know you need several related clarifications, prefer one batch instead of repeated single-question pauses.
+- Keep batch questions independent enough to answer in one pass.
 - `questions` must contain between 2 and 7 entries.
 - Batch questions do not support `allowComment`; add a final optional text question instead.
 - In the interactive overlay, use `←` / `→` or `ctrl+n` / `ctrl+p` to switch questions.
@@ -152,7 +153,7 @@ Batch-mode notes:
 
 ## Result details
 
-Successful tool results include the user's actual answer text in plain-text `content` so agents can continue even in integrations that surface only tool text. They also include a structured `details` object for rendering and session state reconstruction:
+Successful tool results include the user's actual answer text in plain-text `content` so agents can continue even in integrations that surface only tool text. Agent guidance should restate that answer text and either proceed within the chosen scope or report blocked status. Results also include a structured `details` object for rendering and session state reconstruction:
 
 ```typescript
 type AskResponse =
