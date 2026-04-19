@@ -1,7 +1,7 @@
 {
   "name": "pi-ask-user",
   "version": "0.6.1",
-  "description": "Interactive ask_user tool for pi-coding-agent with searchable split-pane selection UI, multi-select, and freeform input",
+  "description": "Interactive ask_user tool for pi-coding-agent with wrapped selection UI, batch clarifications, and freeform input",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -35,6 +35,11 @@
   },
   "files": [
     "index.ts",
+    "ask-user-core.ts",
+    "ask-overlay-controller.ts",
+    "ask-overlay-ui.ts",
+    "ask-component.ts",
+    "batch-ask-component.ts",
     "single-select-layout.ts",
     "skills",
     "README.md",
