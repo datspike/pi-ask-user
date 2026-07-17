@@ -98,7 +98,7 @@ The registered tool name is:
 | `mode` | `"single"?` | omitted | Optional explicit single-question mode |
 | `question` | `string` | *required* | The question to ask the user |
 | `context` | `string?` | - | Relevant context summary shown before the question |
-| `options` | `(string \| {title, description?})[]?` | `[]` | Multiple-choice options |
+| `options` | `{title: string, description?: string}[]?` | `[]` | Multiple-choice options exposed to the model |
 | `allowMultiple` | `boolean?` | `false` | Enable multi-select mode |
 | `allowFreeform` | `boolean?` | `true` | Allow a custom response via the freeform option or by typing directly in the overlay |
 | `allowComment` | `boolean?` | `false` | Expose a user-toggleable extra-context option in the overlay (`ctrl+g` or the toggle row) and collect an optional comment in fallback dialogs |
@@ -120,12 +120,14 @@ The registered tool name is:
 interface BatchQuestion {
   id: string;
   question: string;
-  options?: (string | { title: string; description?: string })[];
+  options?: { title: string; description?: string }[];
   allowMultiple?: boolean;
   allowFreeform?: boolean;
   required?: boolean;
 }
 ```
+
+For runtime compatibility, legacy string options and defensive object aliases (`label`, `text`, `value`, `name`, `option`) are normalized before schema validation. New model-generated calls should use the flat `{ "title": "...", "description": "..." }` shape shown above.
 
 Batch-mode notes:
 - Use it only for one related clarification pass, not unrelated questions, branching interviews, or a single go/no-go decision.
@@ -145,7 +147,7 @@ Batch-mode notes:
   "question": "Which option should we use?",
   "context": "We are choosing a deploy target.",
   "options": [
-    "staging",
+    { "title": "staging" },
     { "title": "production", "description": "Customer-facing" }
   ],
   "allowMultiple": false,
@@ -165,14 +167,14 @@ Batch-mode notes:
     {
       "id": "surface",
       "question": "Which surface is in scope?",
-      "options": ["Overlay", "RPC/headless fallback", "Both"],
+      "options": [{ "title": "Overlay" }, { "title": "RPC/headless fallback" }, { "title": "Both" }],
       "allowFreeform": true,
       "required": true
     },
     {
       "id": "compat",
       "question": "Must the current single-question behavior remain exact?",
-      "options": ["Yes", "No", "Mostly yes"],
+      "options": [{ "title": "Yes" }, { "title": "No" }, { "title": "Mostly yes" }],
       "allowFreeform": true,
       "required": true
     },

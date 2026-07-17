@@ -88,18 +88,81 @@ export interface AskToolDetails {
 
 export type AskUIResult = AskResponse;
 
+const OPTION_TITLE_ALIASES = ["title", "label", "text", "value", "name", "option"] as const;
+
+function readOptionTitle(option: unknown): string | undefined {
+  if (typeof option === "string") {
+    return option.trim();
+  }
+  if (!option || typeof option !== "object" || Array.isArray(option)) {
+    return undefined;
+  }
+
+  const record = option as Record<string, unknown>;
+  for (const alias of OPTION_TITLE_ALIASES) {
+    if (typeof record[alias] === "string") {
+      const title = record[alias].trim();
+      if (title) {
+        return title;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function prepareOptionForSchema(option: unknown): QuestionOption {
+  const title = readOptionTitle(option) ?? "";
+  if (!option || typeof option !== "object" || Array.isArray(option)) {
+    return { title };
+  }
+
+  const description = (option as Record<string, unknown>).description;
+  const normalizedDescription = typeof description === "string" ? description.trim() : "";
+  return normalizedDescription ? { title, description: normalizedDescription } : { title };
+}
+
+export function prepareOptionsForSchema(options: unknown): QuestionOption[] | unknown {
+  return Array.isArray(options) ? options.map(prepareOptionForSchema) : options;
+}
+
+export function prepareAskArguments(args: unknown): Record<string, unknown> {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return {};
+  }
+
+  const prepared = { ...(args as Record<string, unknown>) };
+  if (Array.isArray(prepared.options)) {
+    prepared.options = prepareOptionsForSchema(prepared.options);
+  }
+  if (Array.isArray(prepared.questions)) {
+    prepared.questions = prepared.questions.map((question) => {
+      if (!question || typeof question !== "object" || Array.isArray(question)) {
+        return question;
+      }
+      const preparedQuestion = { ...(question as Record<string, unknown>) };
+      if (Array.isArray(preparedQuestion.options)) {
+        preparedQuestion.options = prepareOptionsForSchema(preparedQuestion.options);
+      }
+      return preparedQuestion;
+    });
+  }
+  return prepared;
+}
+
 export function normalizeOptions(options: AskOptionInput[]): QuestionOption[] {
-  return options
-    .map((option) => {
-      if (typeof option === "string") {
-        return { title: option };
-      }
-      if (option && typeof option === "object" && typeof option.title === "string") {
-        return { title: option.title, description: option.description };
-      }
-      return null;
-    })
-    .filter((option): option is QuestionOption => option !== null);
+  if (!Array.isArray(options)) {
+    return [];
+  }
+
+  const normalized = (options as unknown[])
+    .map(prepareOptionForSchema)
+    .filter((option) => Boolean(option.title))
+    .map((option) => option.description ? option : { title: option.title });
+
+  if (options.length > 0 && normalized.length === 0) {
+    throw new Error("Options must include at least one non-empty title.");
+  }
+  return normalized;
 }
 
 export function formatOptionsForMessage(options: QuestionOption[]): string {

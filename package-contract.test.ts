@@ -1,21 +1,44 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 const ROOT_DIR = path.resolve(import.meta.dir);
 const PACKAGE_JSON_PATH = path.join(ROOT_DIR, "package.json");
 const packageJson = JSON.parse(readFileSync(PACKAGE_JSON_PATH, "utf8")) as {
   files?: string[];
+  peerDependencies?: Record<string, string>;
   pi?: {
     extensions?: string[];
     skills?: string[];
   };
 };
 
+function collectTypeScriptFiles(directory: string): string[] {
+  return readdirSync(directory).flatMap((entry) => {
+    if (entry === "node_modules" || entry === ".git") return [];
+    const absolutePath = path.join(directory, entry);
+    return statSync(absolutePath).isDirectory() ? collectTypeScriptFiles(absolutePath) : absolutePath.endsWith(".ts") ? [absolutePath] : [];
+  });
+}
+
 describe("package contract", () => {
   test("declares the expected Pi package entrypoints", () => {
     expect(packageJson.pi?.extensions).toEqual(["./index.ts"]);
     expect(packageJson.pi?.skills).toEqual(["./skills"]);
+  });
+
+  test("uses the current Pi peer packages with the supported compatibility floor", () => {
+    expect(packageJson.peerDependencies).toEqual({
+      "@earendil-works/pi-coding-agent": ">=0.74.0",
+      "@earendil-works/pi-tui": ">=0.74.0",
+      "@sinclair/typebox": "*",
+    });
+  });
+
+  test("contains no legacy Pi scope in runtime or test TypeScript imports", () => {
+    for (const filePath of collectTypeScriptFiles(ROOT_DIR)) {
+      expect(readFileSync(filePath, "utf8")).not.toContain("@mario" + "zechner/");
+    }
   });
 
   test("publishes all runtime source files referenced by the package", () => {

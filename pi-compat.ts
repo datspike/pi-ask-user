@@ -1,5 +1,5 @@
-import { getMarkdownTheme, type Theme } from "@mariozechner/pi-coding-agent";
-import type { Component, KeybindingsManager, MarkdownTheme, TUI } from "@mariozechner/pi-tui";
+import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import type { Component, KeybindingsManager, MarkdownTheme, TUI } from "@earendil-works/pi-tui";
 
 import { createRequire } from "node:module";
 
@@ -20,12 +20,47 @@ const ASK_OVERLAY_OPTIONS = {
   },
 } as const;
 
+export function isUsableMarkdownTheme(theme: unknown): theme is MarkdownTheme {
+  try {
+    const bold = (theme as { bold?: (text: string) => string } | undefined)?.bold;
+    return typeof bold === "function" && typeof bold.call(theme, "") === "string";
+  } catch {
+    return false;
+  }
+}
+
 export function getOptionalMarkdownTheme(): MarkdownTheme | undefined {
   try {
-    return getMarkdownTheme();
+    const theme = getMarkdownTheme();
+    return isUsableMarkdownTheme(theme) ? theme : undefined;
   } catch {
     return undefined;
   }
+}
+
+export function createDeadline(timeout: number | undefined, startedAt = Date.now()): number | undefined {
+  return timeout && timeout > 0 ? startedAt + timeout : undefined;
+}
+
+export function getRemainingTimeout(deadline: number | undefined, now = Date.now()): number | undefined {
+  return deadline === undefined ? undefined : Math.max(0, deadline - now);
+}
+
+export function getRemainingDialogOptions(
+  deadline: number | undefined,
+  signal: AbortSignal | undefined,
+): { timeout?: number; signal?: AbortSignal } | null | undefined {
+  if (signal?.aborted) {
+    return null;
+  }
+  const timeout = getRemainingTimeout(deadline);
+  if (timeout === 0) {
+    return null;
+  }
+  if (timeout === undefined && !signal) {
+    return undefined;
+  }
+  return { ...(timeout === undefined ? {} : { timeout }), ...(signal ? { signal } : {}) };
 }
 
 export function readEditorText(editor: unknown): string | undefined {

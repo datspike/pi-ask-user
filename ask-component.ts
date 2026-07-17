@@ -1,4 +1,4 @@
-import type { Theme } from "@mariozechner/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,
   type Component,
@@ -13,7 +13,7 @@ import {
   type TUI,
   truncateToWidth,
   wrapTextWithAnsi,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { type AskUIResult, createFreeformResponse, createSelectionResponse } from "./ask-user-core";
 import { SingleAskController } from "./ask-overlay-controller";
 import {

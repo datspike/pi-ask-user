@@ -4,9 +4,9 @@
  * Refactored to keep entrypoint/orchestration separate from overlay components.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { Text } from "@mariozechner/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import {
   type AskParams,
   type AskResponse,
@@ -30,14 +30,19 @@ import {
   normalizeBatchQuestions,
   normalizeOptions,
   parseDialogSelections,
+  prepareAskArguments,
 } from "./ask-user-core";
 import { AskComponent } from "./ask-component";
 import { BatchAskComponent } from "./batch-ask-component";
 import { FREEFORM_SENTINEL } from "./ask-overlay-ui";
 import type { QuestionOption } from "./single-select-layout";
-import { showAskOverlay } from "./pi-compat";
+import { createDeadline, getRemainingDialogOptions, getRemainingTimeout, showAskOverlay } from "./pi-compat";
 
 const BATCH_SKIP_SENTINEL = "Skip this question";
+
+function interactionWasCancelled(signal: AbortSignal | undefined, deadline?: number): boolean {
+  return signal?.aborted === true || getRemainingTimeout(deadline) === 0;
+}
 
 function formatBatchPrompt(
   title: string | undefined,
@@ -59,9 +64,12 @@ async function askSingleViaDialogs(
   allowMultiple: boolean,
   allowFreeform: boolean,
   allowComment: boolean,
-  timeout?: number,
+  timeout: number | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<SingleAskResponse | null> {
-  const dialogOpts = timeout ? { timeout } : undefined;
+  const dialogOpts = timeout && timeout > 0
+    ? { timeout, ...(signal ? { signal } : {}) }
+    : signal ? { signal } : undefined;
   const prompt = context ? `${question}\n\nContext:\n${context}` : question;
 
   if (allowMultiple) {
@@ -71,12 +79,13 @@ async function askSingleViaDialogs(
       "Type your selection(s)...",
       dialogOpts,
     )) as string | undefined;
-    if (isCancelledInput(rawSelections)) return null;
+    if (signal?.aborted || isCancelledInput(rawSelections)) return null;
 
     const selections = parseDialogSelections(rawSelections);
     if (selections.length === 0) return null;
 
     if (!allowComment) {
+      if (signal?.aborted) return null;
       return createSelectionResponse(selections);
     }
 
@@ -85,6 +94,7 @@ async function askSingleViaDialogs(
       "Optional comment (press Enter to skip)...",
       dialogOpts,
     )) as string | undefined;
+    if (signal?.aborted) return null;
     return createSelectionResponse(selections, comment);
   }
 
@@ -92,15 +102,16 @@ async function askSingleViaDialogs(
   if (allowFreeform) selectOptions.push(FREEFORM_SENTINEL);
 
   const selected = (await ui.select(prompt, selectOptions, dialogOpts)) as string | undefined;
-  if (isCancelledInput(selected)) return null;
+  if (signal?.aborted || isCancelledInput(selected)) return null;
 
   if (selected === FREEFORM_SENTINEL) {
     const answer = (await ui.input(prompt, "Type your answer...", dialogOpts)) as string | undefined;
-    if (isCancelledInput(answer)) return null;
+    if (signal?.aborted || isCancelledInput(answer)) return null;
     return createFreeformResponse(answer);
   }
 
   if (!allowComment) {
+    if (signal?.aborted) return null;
     return createSelectionResponse([selected]);
   }
 
@@ -109,6 +120,7 @@ async function askSingleViaDialogs(
     "Optional comment (press Enter to skip)...",
     dialogOpts,
   )) as string | undefined;
+  if (signal?.aborted) return null;
   return createSelectionResponse([selected], comment);
 }
 
@@ -119,19 +131,21 @@ async function askBatchQuestionViaDialogs(
   question: BatchQuestion,
   index: number,
   total: number,
-  timeout?: number,
+  deadline: number | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<BatchAnswer | null> {
-  const dialogOpts = timeout ? { timeout } : undefined;
   const prompt = formatBatchPrompt(title, context, question, index, total);
 
   if (question.options.length === 0) {
     while (true) {
+      const dialogOpts = getRemainingDialogOptions(deadline, signal);
+      if (dialogOpts === null) return null;
       const answer = (await ui.input(
         prompt,
         question.required ? "Type your answer..." : "Type your answer (press Enter to skip)...",
         dialogOpts,
       )) as string | undefined;
-      if (isCancelledInput(answer)) return null;
+      if (interactionWasCancelled(signal, deadline) || isCancelledInput(answer)) return null;
 
       const response = createFreeformResponse(answer);
       if (response) return createBatchAnswer(question.id, response);
@@ -142,14 +156,17 @@ async function askBatchQuestionViaDialogs(
   if (question.allowMultiple) {
     const optionList = formatOptionsForMessage(question.options);
     while (true) {
+      const dialogOpts = getRemainingDialogOptions(deadline, signal);
+      if (dialogOpts === null) return null;
       const rawSelections = (await ui.input(
         `${prompt}\n\nOptions (select one or more):\n${optionList}`,
         question.required ? "Type your selection(s)..." : "Type your selection(s) or press Enter to skip...",
         dialogOpts,
       )) as string | undefined;
-      if (isCancelledInput(rawSelections)) return null;
+      if (interactionWasCancelled(signal, deadline) || isCancelledInput(rawSelections)) return null;
 
       const selections = parseDialogSelections(rawSelections);
+      if (interactionWasCancelled(signal, deadline)) return null;
       if (selections.length > 0) {
         return createBatchAnswer(question.id, createSelectionResponse(selections));
       }
@@ -162,17 +179,21 @@ async function askBatchQuestionViaDialogs(
   if (!question.required) selectOptions.push(BATCH_SKIP_SENTINEL);
 
   while (true) {
-    const selected = (await ui.select(prompt, selectOptions, dialogOpts)) as string | undefined;
-    if (isCancelledInput(selected)) return null;
+    const selectDialogOpts = getRemainingDialogOptions(deadline, signal);
+    if (selectDialogOpts === null) return null;
+    const selected = (await ui.select(prompt, selectOptions, selectDialogOpts)) as string | undefined;
+    if (interactionWasCancelled(signal, deadline) || isCancelledInput(selected)) return null;
     if (selected === BATCH_SKIP_SENTINEL) return createSkippedBatchAnswer(question.id);
 
     if (selected === FREEFORM_SENTINEL) {
+      const inputDialogOpts = getRemainingDialogOptions(deadline, signal);
+      if (inputDialogOpts === null) return null;
       const answer = (await ui.input(
         prompt,
         question.required ? "Type your answer..." : "Type your answer (press Enter to skip)...",
-        dialogOpts,
+        inputDialogOpts,
       )) as string | undefined;
-      if (isCancelledInput(answer)) return null;
+      if (interactionWasCancelled(signal, deadline) || isCancelledInput(answer)) return null;
 
       const response = createFreeformResponse(answer);
       if (response) return createBatchAnswer(question.id, response);
@@ -180,6 +201,7 @@ async function askBatchQuestionViaDialogs(
       continue;
     }
 
+    if (interactionWasCancelled(signal, deadline)) return null;
     return createBatchAnswer(question.id, createSelectionResponse([selected]));
   }
 }
@@ -189,23 +211,26 @@ async function askBatchViaDialogs(
   title: string | undefined,
   context: string | undefined,
   questions: BatchQuestion[],
-  timeout?: number,
+  deadline: number | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<AskResponse | null> {
   const answers: BatchAnswer[] = [];
   for (const [index, question] of questions.entries()) {
-    const answer = await askBatchQuestionViaDialogs(ui, title, context, question, index, questions.length, timeout);
-    if (answer === null) return null;
+    const answer = await askBatchQuestionViaDialogs(ui, title, context, question, index, questions.length, deadline, signal);
+    if (interactionWasCancelled(signal, deadline) || answer === null) return null;
     answers.push(answer);
   }
 
-  const dialogOpts = timeout ? { timeout } : undefined;
+  const dialogOpts = getRemainingDialogOptions(deadline, signal);
+  if (dialogOpts === null) return null;
   const submitLabel = (await ui.select(
     `${title ?? "Clarification batch"}\n\nSubmit ${answers.length} answer(s)?`,
     ["Submit answers", "Cancel"],
     dialogOpts,
   )) as string | undefined;
 
-  if (isCancelledInput(submitLabel) || submitLabel !== "Submit answers") return null;
+  if (interactionWasCancelled(signal, deadline) || isCancelledInput(submitLabel) || submitLabel !== "Submit answers") return null;
+  if (interactionWasCancelled(signal, deadline)) return null;
   return { kind: "batch", answers };
 }
 
@@ -217,6 +242,7 @@ export default function (pi: ExtensionAPI) {
       "Ask the user one focused question or one batch of 2-7 related clarifications after gathering context. Use single mode for one decision gate; use batch mode when several related clarifications are already known up front.",
     promptSnippet:
       "Ask the user one focused question or one batch of related clarifications after gathering context",
+    executionMode: "sequential",
     promptGuidelines: [
       "Before calling ask_user, gather evidence with tools and pass a short neutral summary via the context field.",
       "Use single mode for one high-stakes, preference-sensitive, or ambiguous decision boundary.",
@@ -235,13 +261,10 @@ export default function (pi: ExtensionAPI) {
       ),
       options: Type.Optional(
         Type.Array(
-          Type.Union([
-            Type.String({ description: "Short title for this option" }),
-            Type.Object({
-              title: Type.String({ description: "Short title for this option" }),
-              description: Type.Optional(Type.String({ description: "Longer description explaining this option" })),
-            }),
-          ]),
+          Type.Object({
+            title: Type.String({ description: "Short title for this option" }),
+            description: Type.Optional(Type.String({ description: "Longer description explaining this option" })),
+          }),
           { description: "List of options for the user to choose from in single-question mode" },
         ),
       ),
@@ -257,13 +280,10 @@ export default function (pi: ExtensionAPI) {
             question: Type.String({ description: "The question to ask the user" }),
             options: Type.Optional(
               Type.Array(
-                Type.Union([
-                  Type.String({ description: "Short title for this option" }),
-                  Type.Object({
-                    title: Type.String({ description: "Short title for this option" }),
-                    description: Type.Optional(Type.String({ description: "Longer description explaining this option" })),
-                  }),
-                ]),
+                Type.Object({
+                  title: Type.String({ description: "Short title for this option" }),
+                  description: Type.Optional(Type.String({ description: "Longer description explaining this option" })),
+                }),
                 { description: "List of options for the user to choose from" },
               ),
             ),
@@ -276,9 +296,12 @@ export default function (pi: ExtensionAPI) {
       ),
       timeout: Type.Optional(Type.Number({ description: "Auto-dismiss after N milliseconds. Returns null (cancelled) when expired." })),
     }),
+    prepareArguments: prepareAskArguments,
 
     async execute(_toolCallId, rawParams, signal, onUpdate, ctx) {
+      const startedAt = Date.now();
       const params = rawParams as AskParams;
+      const batchDeadline = isBatchParams(params) ? createDeadline(params.timeout, startedAt) : undefined;
       if (signal?.aborted) {
         return {
           content: [{ type: "text", text: "Cancelled" }],
@@ -295,21 +318,8 @@ export default function (pi: ExtensionAPI) {
           }
           const title = params.title?.trim() || undefined;
           const questions = normalizeBatchQuestions(params.questions);
-          const timeout = params.timeout;
-
           if (!ctx.hasUI || !ctx.ui) {
-            const questionText = questions.map((question, index) => `${index + 1}. ${question.question}`).join("\n");
-            const contextText = normalizedContext ? `\n\nContext:\n${normalizedContext}` : "";
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Ask requires interactive mode. Please answer this clarification batch:\n\n${title ?? "Clarification batch"}${contextText}\n\n${questionText}`,
-                },
-              ],
-              isError: true,
-              details: { mode: "batch", title, context: normalizedContext, questions, response: null, cancelled: true } as AskToolDetails,
-            };
+            throw new Error("Ask requires interactive mode.");
           }
 
           onUpdate?.({
@@ -318,19 +328,27 @@ export default function (pi: ExtensionAPI) {
           });
 
           let result: AskUIResult | null;
-          const customResult = await showAskOverlay<AskUIResult>(
-            ctx.ui.custom.bind(ctx.ui),
-            signal,
-            timeout,
-            (tui, theme, keybindings, done) => new BatchAskComponent(title, normalizedContext, questions, tui, theme, keybindings, done),
-          );
+          const overlayTimeout = getRemainingTimeout(batchDeadline);
+          const customResult = overlayTimeout === 0
+            ? null
+            : await showAskOverlay<AskUIResult>(
+                ctx.ui.custom.bind(ctx.ui),
+                signal,
+                overlayTimeout,
+                (tui, theme, keybindings, done) => new BatchAskComponent(title, normalizedContext, questions, tui, theme, keybindings, done),
+              );
 
-          if (customResult !== undefined) {
+          if (interactionWasCancelled(signal, batchDeadline)) {
+            result = null;
+          } else if (customResult !== undefined) {
             result = customResult;
           } else {
-            result = await askBatchViaDialogs(ctx.ui, title, normalizedContext, questions, timeout);
+            result = await askBatchViaDialogs(ctx.ui, title, normalizedContext, questions, batchDeadline, signal);
           }
 
+          if (interactionWasCancelled(signal, batchDeadline)) {
+            result = null;
+          }
           if (result === null) {
             pi.events.emit("ask:cancelled", { mode: "batch", title, context: normalizedContext, questions });
             return {
@@ -339,6 +357,13 @@ export default function (pi: ExtensionAPI) {
             };
           }
 
+          if (interactionWasCancelled(signal, batchDeadline)) {
+            pi.events.emit("ask:cancelled", { mode: "batch", title, context: normalizedContext, questions });
+            return {
+              content: [{ type: "text", text: "User cancelled the clarification batch" }],
+              details: { mode: "batch", title, context: normalizedContext, questions, response: null, cancelled: true } as AskToolDetails,
+            };
+          }
           pi.events.emit("ask:answered", {
             mode: "batch",
             title,
@@ -374,26 +399,16 @@ export default function (pi: ExtensionAPI) {
         const options = normalizeOptions(rawOptions);
 
         if (!ctx.hasUI || !ctx.ui) {
-          const optionText = options.length > 0 ? `\n\nOptions:\n${formatOptionsForMessage(options)}` : "";
-          const freeformHint = allowFreeform ? "\n\nYou can also answer freely." : "";
-          const commentHint = allowComment ? "\n\nAfter choosing an option, you may add an optional comment." : "";
-          const contextText = normalizedContext ? `\n\nContext:\n${normalizedContext}` : "";
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Ask requires interactive mode. Please answer:\n\n${normalizedQuestion}${contextText}${optionText}${freeformHint}${commentHint}`,
-              },
-            ],
-            isError: true,
-            details: { mode: "single", question: normalizedQuestion, context: normalizedContext, options, response: null, cancelled: true } as AskToolDetails,
-          };
+          throw new Error("Ask requires interactive mode.");
         }
 
         if (options.length === 0) {
           const prompt = normalizedContext ? `${normalizedQuestion}\n\nContext:\n${normalizedContext}` : normalizedQuestion;
-          const answer = await ctx.ui.input(prompt, "Type your answer...", timeout ? { timeout } : undefined);
-          const response = createFreeformResponse(answer);
+          const dialogOpts = timeout && timeout > 0
+            ? { timeout, ...(signal ? { signal } : {}) }
+            : signal ? { signal } : undefined;
+          const answer = await ctx.ui.input(prompt, "Type your answer...", dialogOpts);
+          const response = signal?.aborted ? null : createFreeformResponse(answer);
 
           if (!response) {
             return {
@@ -402,6 +417,12 @@ export default function (pi: ExtensionAPI) {
             };
           }
 
+          if (signal?.aborted) {
+            return {
+              content: [{ type: "text", text: "User cancelled the question" }],
+              details: { mode: "single", question: normalizedQuestion, context: normalizedContext, options, response: null, cancelled: true } as AskToolDetails,
+            };
+          }
           pi.events.emit("ask:answered", { question: normalizedQuestion, context: normalizedContext, response });
           return {
             content: [{ type: "text", text: formatSuccessfulResponseContent(response) }],
@@ -433,12 +454,17 @@ export default function (pi: ExtensionAPI) {
           ),
         );
 
-        if (customResult !== undefined) {
+        if (signal?.aborted) {
+          result = null;
+        } else if (customResult !== undefined) {
           result = customResult;
         } else {
-          result = await askSingleViaDialogs(ctx.ui, normalizedQuestion, normalizedContext, options, allowMultiple, allowFreeform, allowComment, timeout);
+          result = await askSingleViaDialogs(ctx.ui, normalizedQuestion, normalizedContext, options, allowMultiple, allowFreeform, allowComment, timeout, signal);
         }
 
+        if (signal?.aborted) {
+          result = null;
+        }
         if (result === null) {
           pi.events.emit("ask:cancelled", { question: normalizedQuestion, context: normalizedContext, options });
           return {
@@ -447,6 +473,13 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
+        if (signal?.aborted) {
+          pi.events.emit("ask:cancelled", { question: normalizedQuestion, context: normalizedContext, options });
+          return {
+            content: [{ type: "text", text: "User cancelled the question" }],
+            details: { mode: "single", question: normalizedQuestion, context: normalizedContext, options, response: null, cancelled: true } as AskToolDetails,
+          };
+        }
         pi.events.emit("ask:answered", {
           question: normalizedQuestion,
           context: normalizedContext,
@@ -464,11 +497,12 @@ export default function (pi: ExtensionAPI) {
           } as AskToolDetails,
         };
       } catch (error) {
-        const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+        if (!signal?.aborted) {
+          throw error;
+        }
         return {
-          content: [{ type: "text", text: `Ask tool failed: ${message}` }],
-          isError: true,
-          details: { error: message },
+          content: [{ type: "text", text: "Cancelled" }],
+          details: { mode: isBatchParams(params) ? "batch" : "single", response: null, cancelled: true } as AskToolDetails,
         };
       }
     },
@@ -510,11 +544,17 @@ export default function (pi: ExtensionAPI) {
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, options, theme) {
+    renderResult(result, options, theme, context) {
       const details = result.details as (AskToolDetails & { error?: string }) | undefined;
+      const contentText = result.content
+        ?.filter((part: { type?: string; text?: string }) => part?.type === "text")
+        .map((part: { text?: string }) => part.text ?? "")
+        .join("\n")
+        .trim();
+      const errorText = details?.error || (context?.isError ? contentText : undefined);
 
-      if (details?.error) {
-        return new Text(theme.fg("error", `✗ ${details.error}`), 0, 0);
+      if (errorText) {
+        return new Text(theme.fg("error", `✗ ${errorText}`), 0, 0);
       }
 
       if (options.isPartial) {

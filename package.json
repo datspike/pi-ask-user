@@ -1,6 +1,6 @@
 {
   "name": "@datspike/pi-ask-user",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Interactive ask_user tool for pi-coding-agent with wrapped selection UI, batch clarifications, and freeform input",
   "type": "module",
   "keywords": [
@@ -50,8 +50,8 @@
     "check": "npm pack --dry-run"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
+    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "@earendil-works/pi-tui": ">=0.74.0",
     "@sinclair/typebox": "*"
   }
 }

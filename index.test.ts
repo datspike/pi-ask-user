@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, mock, test } from "bun:test";
 let editorInputs: string[] = [];
 let editorText = "";
 let emittedEvents: Array<{ name: string; payload: any }> = [];
+let markdownTheme: any;
 
 class MockText {
    constructor(private text: string) { }
@@ -80,13 +81,13 @@ function createKeybindings(overrides: Partial<Record<string, string[]>> = {}) {
 }
 
 beforeAll(() => {
-   mock.module("@mariozechner/pi-coding-agent", () => ({
+   mock.module("@earendil-works/pi-coding-agent", () => ({
       DynamicBorder: class { },
-      getMarkdownTheme: () => undefined,
+      getMarkdownTheme: () => markdownTheme,
       rawKeyHint: (key: string, description: string) => `${key} ${description}`,
    }));
 
-   mock.module("@mariozechner/pi-tui", () => ({
+   mock.module("@earendil-works/pi-tui", () => ({
       Container: MockContainer,
       Editor: MockEditor,
       Key: {
@@ -104,7 +105,7 @@ beforeAll(() => {
       },
       Markdown: class extends MockText { },
       matchesKey: (data: string, key: string) => data === key,
-      Spacer: class { },
+      Spacer: class { render() { return []; } },
       Text: MockText,
       truncateToWidth: (text: string) => text,
       wrapTextWithAnsi: (text: string) => [text],
@@ -123,18 +124,21 @@ beforeAll(() => {
 
    mock.module("@sinclair/typebox", () => ({
       Type: {
-         Object: (value: unknown) => value,
-         String: (value?: unknown) => value,
-         Optional: (value: unknown) => value,
-         Array: (value: unknown) => value,
-         Union: (value: unknown) => value,
-         Boolean: (value?: unknown) => value,
-         Number: (value?: unknown) => value,
+         Object: (properties: unknown, options?: unknown) => ({ kind: "object", properties, options }),
+         String: (options?: unknown) => ({ kind: "string", options }),
+         Optional: (item: unknown) => ({ kind: "optional", item }),
+         Array: (items: unknown, options?: unknown) => ({ kind: "array", items, options }),
+         Union: (items: unknown) => ({ kind: "union", items }),
+         Boolean: (options?: unknown) => ({ kind: "boolean", options }),
+         Number: (options?: unknown) => ({ kind: "number", options }),
       },
    }));
 });
 
 type RegisteredTool = {
+   executionMode?: string;
+   parameters?: any;
+   prepareArguments?: (args: unknown) => any;
    execute: (...args: any[]) => Promise<any>;
    renderCall?: (args: any, theme: any) => any;
    renderResult: (result: any, options: any, theme: any) => any;
@@ -172,6 +176,56 @@ function createTheme() {
 }
 
 describe("ask_user", () => {
+   test("registers sequential execution with flat model-facing option schemas", async () => {
+      const tool = await setupTool();
+      const topLevelOptions = tool.parameters.properties.options.item;
+      const nestedOptions = tool.parameters.properties.questions.item.items.properties.options.item;
+
+      expect(tool.executionMode).toBe("sequential");
+      expect(topLevelOptions.items.kind).toBe("object");
+      expect(topLevelOptions.items.properties.title.kind).toBe("string");
+      expect(topLevelOptions.items.properties.description.kind).toBe("optional");
+      expect(nestedOptions.items.kind).toBe("object");
+      expect(nestedOptions.items.properties.title.kind).toBe("string");
+   });
+
+   test("prepares legacy strings and defensive aliases before schema validation", async () => {
+      const tool = await setupTool();
+      const prepared = tool.prepareArguments?.({
+         question: "Choose",
+         options: [" Alpha ", { label: " Beta ", description: " Second " }, { value: 42 }, null],
+         questions: [
+            {
+               id: "nested",
+               question: "Nested",
+               options: [{ text: " Gamma " }, { option: " Delta ", description: 12 }],
+            },
+         ],
+      });
+
+      expect(prepared.options).toEqual([
+         { title: "Alpha" },
+         { title: "Beta", description: "Second" },
+         { title: "" },
+         { title: "" },
+      ]);
+      expect(prepared.questions[0].options).toEqual([
+         { title: "Gamma" },
+         { title: "Delta" },
+      ]);
+   });
+
+   test("rejects a lazy markdown theme proxy that fails its safe probe", async () => {
+      const { isUsableMarkdownTheme } = await import("./pi-compat");
+      const lazyTheme = {
+         bold() {
+            throw new Error("theme is not initialized");
+         },
+      };
+
+      expect(isUsableMarkdownTheme(lazyTheme)).toBe(false);
+   });
+
    test("does not hide the overlay on narrow terminals", async () => {
       const tool = await setupTool();
       let capturedOptions: any;
@@ -226,6 +280,32 @@ describe("ask_user", () => {
 
       expect(rendered).toContain("Waiting for user input...");
       expect(rendered).not.toContain("✓");
+   });
+
+   test("renders the current Pi error result shape from content instead of cancellation", async () => {
+      const tool = await setupTool();
+      const component = tool.renderResult(
+         {
+            content: [{ type: "text", text: "Ask requires interactive mode." }],
+            details: {},
+         },
+         { expanded: false, isPartial: false },
+         createTheme(),
+         { isError: true } as any,
+      ) as any;
+
+      const rendered = component.render(120).join("\n");
+
+      expect(rendered).toContain("✗ Ask requires interactive mode.");
+      expect(rendered).not.toContain("Cancelled");
+
+      const legacyComponent = tool.renderResult(
+         { content: [], details: { error: "Legacy error" } },
+         { expanded: false, isPartial: false },
+         createTheme(),
+         { isError: false } as any,
+      ) as any;
+      expect(legacyComponent.render(120).join("\n")).toContain("✗ Legacy error");
    });
 
    test("marks each selected option in expanded multi-select results", async () => {
@@ -1058,7 +1138,7 @@ describe("ask_user", () => {
    test("rejects invalid batch requests before starting interaction", async () => {
       const tool = await setupTool();
 
-      const result = await tool.execute(
+      await expect(tool.execute(
          "tool-call-id",
          {
             mode: "batch",
@@ -1075,10 +1155,194 @@ describe("ask_user", () => {
                },
             },
          },
+      )).rejects.toThrow("Batch mode requires between 2 and 7 questions");
+   });
+
+   test("rejects fully malformed options before any UI callback", async () => {
+      const tool = await setupTool();
+      let customCalled = false;
+
+      await expect(tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: [{ label: 42 }, null] },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async () => {
+                  customCalled = true;
+                  return null;
+               },
+            },
+         },
+      )).rejects.toThrow("Options must include at least one non-empty title");
+      expect(customCalled).toBe(false);
+   });
+
+   test("rejects malformed batch options before updates or UI callbacks", async () => {
+      const tool = await setupTool();
+      let updated = false;
+      let customCalled = false;
+
+      await expect(tool.execute(
+         "tool-call-id",
+         {
+            mode: "batch",
+            questions: [
+               { id: "first", question: "First?", options: [{ name: 7 }] },
+               { id: "second", question: "Second?", options: ["Valid"] },
+            ],
+         },
+         undefined,
+         () => { updated = true; },
+         {
+            hasUI: true,
+            ui: {
+               custom: async () => {
+                  customCalled = true;
+                  return null;
+               },
+            },
+         },
+      )).rejects.toThrow("Options must include at least one non-empty title");
+      expect(updated).toBe(false);
+      expect(customCalled).toBe(false);
+   });
+
+   test("throws when interactive UI is unavailable", async () => {
+      const tool = await setupTool();
+
+      await expect(tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"] },
+         undefined,
+         undefined,
+         { hasUI: false },
+      )).rejects.toThrow("Ask requires interactive mode");
+   });
+
+   test("propagates real overlay and dialog errors", async () => {
+      const tool = await setupTool();
+
+      await expect(tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"] },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: { custom: async () => { throw new Error("overlay failed"); } },
+         },
+      )).rejects.toThrow("overlay failed");
+
+      await expect(tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"] },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async () => undefined,
+               select: async () => { throw new Error("select failed"); },
+               input: async () => undefined,
+            },
+         },
+      )).rejects.toThrow("select failed");
+
+      await expect(tool.execute(
+         "tool-call-id",
+         { question: "Write an answer" },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: { input: async () => { throw new Error("input failed"); } },
+         },
+      )).rejects.toThrow("input failed");
+   });
+
+   test("keeps overlay timeout as a cancelled result", async () => {
+      const tool = await setupTool();
+
+      const result = await tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"], timeout: 1 },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: (factory: any) => new Promise((resolve) => {
+                  factory(
+                     { requestRender() {}, terminal: { rows: 24 } },
+                     createTheme(),
+                     createKeybindings(),
+                     resolve,
+                  );
+               }),
+            },
+         },
       );
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Batch mode requires between 2 and 7 questions");
+      expect(result.details.cancelled).toBe(true);
+      expect(result.details.response).toBeNull();
+   });
+
+   test("keeps pre-abort and confirmed mid-flight abort as cancelled results", async () => {
+      const tool = await setupTool();
+      const preAborted = new AbortController();
+      preAborted.abort();
+
+      const preResult = await tool.execute("tool-call-id", { question: "Choose" }, preAborted.signal, undefined, {});
+      expect(preResult.details).toEqual({ mode: "single", response: null, cancelled: true });
+
+      const midFlight = new AbortController();
+      const midResult = await tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"] },
+         midFlight.signal,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async () => {
+                  midFlight.abort();
+                  throw new Error("dismissed by abort");
+               },
+            },
+         },
+      );
+      expect(midResult.details.cancelled).toBe(true);
+      expect(midResult.details.response).toBeNull();
+   });
+
+   test("returns cancellation when single fallback aborts before returning a value", async () => {
+      const tool = await setupTool();
+      const controller = new AbortController();
+
+      const result = await tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"] },
+         controller.signal,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async () => undefined,
+               select: async () => {
+                  controller.abort();
+                  return "A";
+               },
+               input: async () => undefined,
+            },
+         },
+      );
+
+      expect(result.details.cancelled).toBe(true);
+      expect(result.details.response).toBeNull();
+      expect(emittedEvents.some((event) => event.name === "ask:answered")).toBe(false);
    });
 
    test("completes a batch clarification flow in the overlay", async () => {
@@ -1887,6 +2151,149 @@ describe("ask_user", () => {
          expect(result.details.cancelled).toBe(false);
       });
 
+
+      test("uses one decreasing batch deadline across overlay, fallback questions, and submit", async () => {
+         const tool = await setupTool();
+         const originalDateNow = Date.now;
+         let now = 1_000;
+         const observedTimeouts: number[] = [];
+         Date.now = () => now;
+
+         try {
+            const result = await tool.execute(
+               "tool-call-id",
+               {
+                  mode: "batch",
+                  title: "Clarify scope",
+                  timeout: 1_000,
+                  questions: [
+                     { id: "surface", question: "Which surface?", options: ["Overlay", "Fallback"] },
+                     { id: "notes", question: "Anything else?", required: false },
+                  ],
+               },
+               undefined,
+               undefined,
+               {
+                  hasUI: true,
+                  ui: {
+                     custom: async () => {
+                        now = 1_200;
+                        return undefined;
+                     },
+                     select: async (_title: string, opts: string[], dialogOpts: any) => {
+                        observedTimeouts.push(dialogOpts.timeout);
+                        if (opts[0] === "Submit answers") return "Submit answers";
+                        now += 300;
+                        return "Fallback";
+                     },
+                     input: async (_title: string, _placeholder: string, dialogOpts: any) => {
+                        observedTimeouts.push(dialogOpts.timeout);
+                        now += 200;
+                        return "";
+                     },
+                  },
+               },
+            );
+
+            expect(result.details.cancelled).toBe(false);
+            expect(observedTimeouts).toEqual([800, 500, 300]);
+         } finally {
+            Date.now = originalDateNow;
+         }
+      });
+
+      test("returns cancellation when batch submit arrives after the shared deadline", async () => {
+         const tool = await setupTool();
+         const originalDateNow = Date.now;
+         let now = 1_000;
+         let selectCalls = 0;
+         Date.now = () => now;
+
+         try {
+            const result = await tool.execute(
+               "tool-call-id",
+               {
+                  mode: "batch",
+                  timeout: 1_000,
+                  questions: [
+                     { id: "surface", question: "Which surface?", options: ["Fallback"] },
+                     { id: "compat", question: "Keep compatibility?", options: ["Yes"] },
+                  ],
+               },
+               undefined,
+               undefined,
+               {
+                  hasUI: true,
+                  ui: {
+                     custom: async () => undefined,
+                     select: async (_title: string, options: string[]) => {
+                        selectCalls += 1;
+                        if (options[0] === "Submit answers") {
+                           now = 2_001;
+                           return "Submit answers";
+                        }
+                        return options[0];
+                     },
+                     input: async () => undefined,
+                  },
+               },
+            );
+
+            expect(selectCalls).toBe(3);
+            expect(result.details.cancelled).toBe(true);
+            expect(result.details.response).toBeNull();
+            expect(emittedEvents.some((event) => event.name === "ask:answered")).toBe(false);
+         } finally {
+            Date.now = originalDateNow;
+         }
+      });
+
+      test("does not start batch fallback after the shared deadline expires in custom UI", async () => {
+         const tool = await setupTool();
+         const originalDateNow = Date.now;
+         let now = 1_000;
+         let fallbackCalls = 0;
+         Date.now = () => now;
+
+         try {
+            const result = await tool.execute(
+               "tool-call-id",
+               {
+                  mode: "batch",
+                  timeout: 1_000,
+                  questions: [
+                     { id: "surface", question: "Which surface?", options: ["Overlay", "Fallback"] },
+                     { id: "compat", question: "Keep compatibility?", options: ["Yes", "No"] },
+                  ],
+               },
+               undefined,
+               undefined,
+               {
+                  hasUI: true,
+                  ui: {
+                     custom: async () => {
+                        now = 2_000;
+                        return undefined;
+                     },
+                     select: async () => {
+                        fallbackCalls += 1;
+                        return "Yes";
+                     },
+                     input: async () => {
+                        fallbackCalls += 1;
+                        return "answer";
+                     },
+                  },
+               },
+            );
+
+            expect(result.details.cancelled).toBe(true);
+            expect(result.details.response).toBeNull();
+            expect(fallbackCalls).toBe(0);
+         } finally {
+            Date.now = originalDateNow;
+         }
+      });
 
       test("batch mode falls back to a single tool-owned clarification loop", async () => {
          const tool = await setupTool();
