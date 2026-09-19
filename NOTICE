@@ -1,0 +1,7 @@
+## Fork provenance
+
+- upstream: `https://github.com/edlsh/pi-ask-user`;
+- verified merge base: `0298e574ef6f523b5d21e71960693ccd8711460d` on `upstream/main`;
+- maintained fork: `https://github.com/datspike/pi-ask-user`.
+
+The upstream MIT copyright and permission notice remain in `LICENSE`. Copyright for Datspike modifications is retained by Datspike under the same MIT terms.

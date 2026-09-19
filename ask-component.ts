@@ -12,7 +12,6 @@ import {
   Text,
   type TUI,
   truncateToWidth,
-  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { type AskUIResult, createFreeformResponse, createSelectionResponse } from "./ask-user-core";
 import { SingleAskController } from "./ask-overlay-controller";
@@ -39,6 +38,18 @@ import {
 } from "./pi-compat";
 import type { QuestionOption } from "./single-select-layout";
 
+function wrapPlainText(text: string, width: number): string[] {
+  const words = text.trim().split(/\s+/);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    if (!line || line.length + 1 + word.length <= width) line = line ? `${line} ${word}` : word;
+    else { lines.push(line); line = word; }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+
 export class AskComponent extends Container {
   private question: string;
   private context?: string;
@@ -49,6 +60,12 @@ export class AskComponent extends Container {
   private tui: TUI;
   private theme: Theme;
   private keybindings: KeybindingsManager;
+  private displayMode: "overlay" | "inline";
+  private singleSelectLayout: "auto" | "list";
+  private preferExpandedContext: boolean;
+  private commentToggleKey: string | null;
+  private contextToggleKey: string;
+  private overlayToggleKey: string | null;
   private onDone: (result: AskUIResult | null) => void;
   private controller = new SingleAskController();
 
@@ -62,6 +79,12 @@ export class AskComponent extends Container {
   private multiSelectList?: MultiSelectList;
   private editor?: Editor;
   private _focused = false;
+  private promptScrollOffset = 0;
+  private promptMaxScrollOffset = 0;
+  private promptViewportRows = 0;
+  private contextExpanded = false;
+  private contextCollapsible = false;
+  private contextPreferenceApplied = false;
 
   get focused(): boolean {
     return this._focused;
@@ -81,6 +104,12 @@ export class AskComponent extends Container {
     allowMultiple: boolean,
     allowFreeform: boolean,
     allowComment: boolean,
+    displayMode: "overlay" | "inline",
+    singleSelectLayout: "auto" | "list",
+    contextExpanded: boolean,
+    commentToggleKey: string | null,
+    contextToggleKey: string,
+    overlayToggleKey: string | null,
     tui: TUI,
     theme: Theme,
     keybindings: KeybindingsManager,
@@ -94,9 +123,15 @@ export class AskComponent extends Container {
     this.allowMultiple = allowMultiple;
     this.allowFreeform = allowFreeform;
     this.allowComment = allowComment;
+    this.displayMode = displayMode;
+    this.singleSelectLayout = singleSelectLayout;
+    this.preferExpandedContext = contextExpanded;
     this.tui = tui;
     this.theme = theme;
     this.keybindings = keybindings;
+    this.commentToggleKey = commentToggleKey;
+    this.contextToggleKey = contextToggleKey;
+    this.overlayToggleKey = displayMode === "overlay" ? overlayToggleKey : null;
     this.onDone = onDone;
 
     this.addChild(
@@ -153,38 +188,49 @@ export class AskComponent extends Container {
   override render(width: number): string[] {
     const innerWidth = Math.max(1, width - BOX_BORDER_OVERHEAD);
 
-    if (this.controller.mode === "select" && !this.allowMultiple) {
-      const overlayMaxHeight = Math.max(12, Math.floor(this.tui.terminal.rows * ASK_OVERLAY_MAX_HEIGHT_RATIO));
-      const staticLines = this.countStaticLines(innerWidth);
-      const availableOptionRows = Math.max(4, overlayMaxHeight - staticLines);
-      this.ensureSingleSelectList().setMaxVisibleRows(availableOptionRows);
+    const maxHeight = Math.max(12, Math.floor(this.tui.terminal.rows * ASK_OVERLAY_MAX_HEIGHT_RATIO));
+    const bodyCapacity = Math.max(1, maxHeight - 2);
+    const helpLines = this.helpText.render(innerWidth);
+    const helpBudget = bodyCapacity >= 12 ? Math.min(2, helpLines.length) : Math.min(1, helpLines.length);
+    const contentBudget = Math.max(1, bodyCapacity - helpBudget);
+    const questionLines = wrapPlainText(this.question, Math.max(10, innerWidth)).map((line) => this.theme.fg("text", this.theme.bold(line)));
+    const fullContextLines = this.contextComponent?.render(innerWidth) ?? [];
+    const minimumModeRows = this.controller.mode === "select" ? 3 : 5;
+    this.contextCollapsible = fullContextLines.length > 0 && questionLines.length + fullContextLines.length + 2 + minimumModeRows > contentBudget;
+    if (this.contextCollapsible && !this.contextPreferenceApplied) {
+      this.contextExpanded = this.preferExpandedContext;
+      this.contextPreferenceApplied = true;
     }
-
-    const rawLines = super.render(innerWidth);
+    const contextLines = this.contextCollapsible && !this.contextExpanded
+      ? [this.theme.fg("dim", `Context (${fullContextLines.length} lines) — ${this.contextToggleKey} expand`)]
+      : fullContextLines;
+    const promptLines = [...questionLines, ...(contextLines.length ? ["", ...contextLines] : [])];
+    const separatorRows = contentBudget >= 4 ? 1 : 0;
+    const modeBudget = Math.max(1, Math.min(this.controller.mode === "select" ? 8 : 10, contentBudget - separatorRows - 1));
+    const promptBudget = Math.max(1, contentBudget - separatorRows - modeBudget);
+    let modeLines: string[];
+    if (this.controller.mode === "select") {
+      if (this.allowMultiple) modeLines = this.ensureMultiSelectList().render(innerWidth);
+      else { this.ensureSingleSelectList().setMaxVisibleRows(modeBudget); modeLines = this.ensureSingleSelectList().render(innerWidth); }
+    } else {
+      const editor = this.ensureEditor() as any;
+      const editorLines = typeof editor.render === "function" ? editor.render(innerWidth) : [this.theme.fg("dim", this.currentEditorText() || "Type your answer...")];
+      modeLines = [this.theme.fg("accent", this.theme.bold(this.controller.mode === "comment" ? "Optional comment" : "Custom response")), ...editorLines];
+    }
+    modeLines = modeLines.slice(0, modeBudget);
+    this.promptViewportRows = promptBudget;
+    this.promptMaxScrollOffset = Math.max(0, promptLines.length - promptBudget);
+    this.promptScrollOffset = Math.min(this.promptScrollOffset, this.promptMaxScrollOffset);
+    const visiblePrompt = promptLines.slice(this.promptScrollOffset, this.promptScrollOffset + promptBudget);
+    if (this.promptScrollOffset > 0 && visiblePrompt.length) visiblePrompt[0] = this.theme.fg("dim", "↑ ") + visiblePrompt[0];
+    if (this.promptScrollOffset + promptBudget < promptLines.length && visiblePrompt.length) {
+      const last = visiblePrompt.length - 1; visiblePrompt[last] = this.theme.fg("dim", "↓ ") + visiblePrompt[last];
+    }
+    const body = [...visiblePrompt, ...(visiblePrompt.length && modeLines.length && separatorRows ? [""] : []), ...modeLines, ...helpLines.slice(0, helpBudget)];
     const borderColor = (s: string) => this.theme.fg("accent", s);
-    const titleColor = (s: string) => this.theme.fg("dim", this.theme.bold(s));
-    return rawLines.map((line, index) => {
-      if (index === 0 || index === rawLines.length - 1) {
-        if (index === 0) return new BoxBorderTop(borderColor, "ask_user", titleColor).render(width)[0] ?? "";
-        return new BoxBorderBottom(borderColor, `v${ASK_USER_VERSION}`, (s: string) => this.theme.fg("dim", s)).render(width)[0] ?? "";
-      }
-      const padded = truncateToWidth(line, innerWidth, "", true);
-      return `${borderColor(BOX_BORDER_LEFT)}${padded}${borderColor(BOX_BORDER_RIGHT)}`;
-    });
-  }
-
-  private countWrappedLines(text: string, width: number): number {
-    return Math.max(1, wrapTextWithAnsi(text, Math.max(10, width - 2)).length);
-  }
-
-  private countStaticLines(width: number): number {
-    const titleLines = 1;
-    const questionLines = this.countWrappedLines(this.question, width);
-    const contextLines = this.context ? 1 + this.countWrappedLines(this.context, width) : 0;
-    const helpLines = 1;
-    const borderLines = 2;
-    const spacerLines = this.context ? 6 : 5;
-    return borderLines + spacerLines + titleLines + questionLines + contextLines + helpLines;
+    const top = new BoxBorderTop(borderColor, "ask_user", (s) => this.theme.fg("dim", this.theme.bold(s))).render(width)[0] ?? "";
+    const bottom = new BoxBorderBottom(borderColor, `v${ASK_USER_VERSION}`, (s) => this.theme.fg("dim", s)).render(width)[0] ?? "";
+    return [top, ...body.slice(0, bodyCapacity).map((line) => `${borderColor(BOX_BORDER_LEFT)}${truncateToWidth(line, innerWidth, "", true)}${borderColor(BOX_BORDER_RIGHT)}`), bottom];
   }
 
   private updateStaticText(): void {
@@ -212,6 +258,7 @@ export class AskComponent extends Container {
         keybindingHint(theme, this.keybindings, "tui.input.submit", this.controller.mode === "comment" ? "submit/skip" : "submit"),
         keybindingHint(theme, this.keybindings, "tui.input.newLine", "newline"),
         literalHint(theme, "esc", "back"),
+        this.overlayToggleKey ? literalHint(theme, this.overlayToggleKey, "hide") : null,
         alternateCancelKeys.length > 0 ? literalHint(theme, alternateCancelKeys.join("/"), "cancel") : null,
       ]
         .filter((hint): hint is string => !!hint)
@@ -224,7 +271,10 @@ export class AskComponent extends Container {
       const hints = [
         literalHint(theme, "↑↓", "navigate"),
         literalHint(theme, "space", "toggle"),
-        this.allowComment ? literalHint(theme, "ctrl+g", "toggle context") : null,
+        this.allowComment && this.commentToggleKey ? literalHint(theme, this.commentToggleKey, "toggle context") : null,
+        this.contextCollapsible ? literalHint(theme, this.contextToggleKey, this.contextExpanded ? "collapse context" : "expand context") : null,
+        this.promptMaxScrollOffset > 0 ? literalHint(theme, "PgUp/PgDn", "prompt") : null,
+        this.overlayToggleKey ? literalHint(theme, this.overlayToggleKey, "hide") : null,
         keybindingHint(theme, this.keybindings, "tui.select.confirm", "submit"),
         keybindingHint(theme, this.keybindings, "tui.select.cancel", "cancel"),
       ]
@@ -240,7 +290,10 @@ export class AskComponent extends Container {
     const hints = [
       literalHint(theme, "↑↓", "navigate"),
       this.allowFreeform ? literalHint(theme, "type", "custom answer") : null,
-      this.allowComment ? literalHint(theme, "ctrl+g", "toggle context") : null,
+      this.allowComment && this.commentToggleKey ? literalHint(theme, this.commentToggleKey, "toggle context") : null,
+      this.contextCollapsible ? literalHint(theme, this.contextToggleKey, this.contextExpanded ? "collapse context" : "expand context") : null,
+      this.promptMaxScrollOffset > 0 ? literalHint(theme, "PgUp/PgDn", "prompt") : null,
+      this.overlayToggleKey ? literalHint(theme, this.overlayToggleKey, "hide") : null,
       keybindingHint(theme, this.keybindings, "tui.select.confirm", "select"),
       literalHint(theme, "esc", "cancel"),
       alternateCancelKeys.length > 0 ? literalHint(theme, alternateCancelKeys.join("/"), "cancel") : null,
@@ -259,6 +312,8 @@ export class AskComponent extends Container {
       this.allowComment,
       this.theme,
       this.keybindings,
+      this.commentToggleKey,
+      this.singleSelectLayout,
     );
     list.onSubmit = (result) => this.handleSelectionSubmit([result], list.isCommentEnabled());
     list.onCancel = () => this.onDone(null);
@@ -276,6 +331,7 @@ export class AskComponent extends Container {
       this.allowComment,
       this.theme,
       this.keybindings,
+      this.commentToggleKey,
     );
     list.onCancel = () => this.onDone(null);
     list.onSubmit = (result) => this.handleSelectionSubmit(result, list.isCommentEnabled());
@@ -382,7 +438,25 @@ export class AskComponent extends Container {
     this.tui.requestRender();
   }
 
+  private scrollPrompt(delta: number): void {
+    this.promptScrollOffset = Math.max(0, Math.min(this.promptScrollOffset + delta, this.promptMaxScrollOffset));
+    this.invalidate();
+    this.tui.requestRender();
+  }
+
   handleInput(data: string): void {
+    if (this.controller.mode === "select") {
+      const page = Math.max(1, this.promptViewportRows - 1);
+      if (matchesKey(data, Key.pageDown)) { this.scrollPrompt(page); return; }
+      if (matchesKey(data, Key.pageUp)) { this.scrollPrompt(-page); return; }
+      if (matchesKey(data, Key.home) && this.promptMaxScrollOffset > 0) { this.scrollPrompt(-this.promptMaxScrollOffset); return; }
+      if (matchesKey(data, Key.end) && this.promptMaxScrollOffset > 0) { this.scrollPrompt(this.promptMaxScrollOffset); return; }
+      if (matchesKey(data, Key.ctrl("d")) && this.promptMaxScrollOffset > 0) { this.scrollPrompt(Math.max(1, Math.floor(this.promptViewportRows / 2))); return; }
+      if (matchesKey(data, Key.ctrl("u")) && this.promptMaxScrollOffset > 0) { this.scrollPrompt(-Math.max(1, Math.floor(this.promptViewportRows / 2))); return; }
+      if (matchesKey(data, this.contextToggleKey as any) && this.contextCollapsible) {
+        this.contextExpanded = !this.contextExpanded; this.promptScrollOffset = 0; this.invalidate(); this.tui.requestRender(); return;
+      }
+    }
     if (this.controller.mode === "freeform" || this.controller.mode === "comment") {
       if (matchesKey(data, Key.escape)) {
         this.showSelectMode();

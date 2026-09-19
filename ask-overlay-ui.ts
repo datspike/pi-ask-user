@@ -7,6 +7,7 @@ import {
   type Keybinding,
   type KeybindingsManager,
   Markdown,
+  fuzzyFilter,
   type MarkdownTheme,
   matchesKey,
   truncateToWidth,
@@ -125,8 +126,8 @@ export function literalHint(theme: Theme, key: string, description: string): str
   return `${theme.fg("dim", key)}${theme.fg("muted", ` ${description}`)}`;
 }
 
-export function isCommentToggleKey(data: string): boolean {
-  return matchesKey(data, Key.ctrl("g"));
+export function isCommentToggleKey(data: string, key: string | null = "ctrl+g"): boolean {
+  return key !== null && matchesKey(data, key as any);
 }
 
 export function matchesAnyKey(data: string, keys: string[]): boolean {
@@ -154,6 +155,7 @@ export class MultiSelectList implements Component {
   private allowComment: boolean;
   private theme: Theme;
   private keybindings: KeybindingsManager;
+  private commentToggleKey: string | null;
   private selectedIndex = 0;
   private checked = new Set<number>();
   private commentEnabled = false;
@@ -170,12 +172,14 @@ export class MultiSelectList implements Component {
     allowComment: boolean,
     theme: Theme,
     keybindings: KeybindingsManager,
+    commentToggleKey: string | null = "ctrl+g",
   ) {
     this.options = options;
     this.allowFreeform = allowFreeform;
     this.allowComment = allowComment;
     this.theme = theme;
     this.keybindings = keybindings;
+    this.commentToggleKey = commentToggleKey;
   }
 
   public isCommentEnabled(): boolean {
@@ -252,18 +256,18 @@ export class MultiSelectList implements Component {
       return;
     }
 
-    if (this.allowComment && isCommentToggleKey(data)) {
+    if (this.allowComment && isCommentToggleKey(data, this.commentToggleKey)) {
       this.toggleComment();
       return;
     }
 
-    if (this.keybindings.matches(data, "tui.select.up") || matchesKey(data, Key.shift("tab"))) {
+    if (this.keybindings.matches(data, "tui.select.up") || matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.ctrl("k"))) {
       this.selectedIndex = this.selectedIndex === 0 ? count - 1 : this.selectedIndex - 1;
       this.invalidate();
       return;
     }
 
-    if (this.keybindings.matches(data, "tui.select.down") || matchesKey(data, Key.tab)) {
+    if (this.keybindings.matches(data, "tui.select.down") || matchesKey(data, Key.tab) || matchesKey(data, Key.ctrl("j"))) {
       this.selectedIndex = this.selectedIndex === count - 1 ? 0 : this.selectedIndex + 1;
       this.invalidate();
       return;
@@ -402,7 +406,10 @@ export class WrappedSingleSelectList implements Component {
   private allowComment: boolean;
   private theme: Theme;
   private keybindings: KeybindingsManager;
+  private commentToggleKey: string | null;
+  private layout: "auto" | "list";
   private selectedIndex = 0;
+  private searchQuery = "";
   private commentEnabled = false;
   private maxVisibleRows = 12;
   private cachedWidth?: number;
@@ -418,12 +425,16 @@ export class WrappedSingleSelectList implements Component {
     allowComment: boolean,
     theme: Theme,
     keybindings: KeybindingsManager,
+    commentToggleKey: string | null = "ctrl+g",
+    layout: "auto" | "list" = "auto",
   ) {
     this.options = options;
     this.allowFreeform = allowFreeform;
     this.allowComment = allowComment;
     this.theme = theme;
     this.keybindings = keybindings;
+    this.commentToggleKey = commentToggleKey;
+    this.layout = layout;
   }
 
   public isCommentEnabled(): boolean {
@@ -452,22 +463,39 @@ export class WrappedSingleSelectList implements Component {
     this.cachedLines = undefined;
   }
 
-  private getItemCount(): number {
-    return this.options.length + (this.allowComment ? 1 : 0) + (this.allowFreeform ? 1 : 0);
+  private getFilteredOptions(): QuestionOption[] {
+    return fuzzyFilter(this.options, this.searchQuery, (option) => `${option.title} ${option.description ?? ""}`);
   }
 
-  private isCommentToggleRow(index: number): boolean {
-    return this.allowComment && index === this.options.length;
+  private getItemCount(filteredOptions: QuestionOption[]): number {
+    return filteredOptions.length + (this.allowComment ? 1 : 0) + (this.allowFreeform ? 1 : 0);
   }
 
-  private isFreeformRow(index: number): boolean {
-    return this.allowFreeform && index === this.options.length + (this.allowComment ? 1 : 0);
+  private isCommentToggleRow(index: number, filteredOptions: QuestionOption[]): boolean {
+    return this.allowComment && index === filteredOptions.length;
+  }
+
+  private isFreeformRow(index: number, filteredOptions: QuestionOption[]): boolean {
+    return this.allowFreeform && index === filteredOptions.length + (this.allowComment ? 1 : 0);
   }
 
   private toggleComment(): void {
     if (!this.allowComment) return;
     this.commentEnabled = !this.commentEnabled;
     this.invalidate();
+  }
+
+  private setSearchQuery(query: string): void {
+    this.searchQuery = query;
+    this.selectedIndex = 0;
+    this.invalidate();
+  }
+
+  private popSearchCharacter(): void {
+    if (!this.searchQuery) return;
+    const characters = [...this.searchQuery];
+    characters.pop();
+    this.setSearchQuery(characters.join(""));
   }
 
   private getPrintableInput(data: string): string | null {
@@ -520,42 +548,46 @@ export class WrappedSingleSelectList implements Component {
     return { left, right };
   }
 
-  private buildListLines(width: number, hideDescriptions = false): string[] {
-    const count = this.getItemCount();
-    if (count === 0) {
-      return [truncateToWidth(this.theme.fg("warning", "No options"), width, "")];
+  private buildListLines(width: number, filteredOptions: QuestionOption[], hideDescriptions = false): string[] {
+    const lines: string[] = [];
+    const count = this.getItemCount(filteredOptions);
+    const searchValue = this.searchQuery ? this.theme.fg("text", this.searchQuery) : this.theme.fg("dim", "type to filter");
+    lines.push(truncateToWidth(`${this.theme.fg("accent", "Filter:")} ${searchValue}`, width, ""));
+    if (this.searchQuery && filteredOptions.length === 0) {
+      lines.push(truncateToWidth(this.theme.fg("warning", "No matching options"), width, ""));
     }
-
+    if (count === 0) return lines.slice(0, this.maxVisibleRows);
     const optionRows = renderSingleSelectRows({
-      options: this.options,
+      options: filteredOptions,
       selectedIndex: this.selectedIndex,
       width,
       allowFreeform: this.allowFreeform,
       allowComment: this.allowComment,
       commentEnabled: this.commentEnabled,
-      maxRows: this.maxVisibleRows,
+      maxRows: Math.max(1, this.maxVisibleRows - lines.length),
       hideDescriptions,
     });
-    return optionRows.map((row) => this.styleListLine(row.line, width, row.selected)).slice(0, this.maxVisibleRows);
+    lines.push(...optionRows.map((row) => this.styleListLine(row.line, width, row.selected)));
+    return lines.slice(0, this.maxVisibleRows);
   }
 
-  private buildPreviewLines(width: number, maxLines: number): string[] {
+  private buildPreviewLines(width: number, filteredOptions: QuestionOption[], maxLines: number): string[] {
     if (maxLines <= 0) return [];
 
     const mdTheme: MarkdownTheme | undefined = getOptionalMarkdownTheme();
 
     let md = "";
 
-    if (this.isCommentToggleRow(this.selectedIndex)) {
+    if (this.isCommentToggleRow(this.selectedIndex, filteredOptions)) {
       md += "## Additional context\n\n";
       md += `Currently: **${this.commentEnabled ? "Enabled" : "Disabled"}**\n\n`;
       md += "Turn this on when the selected option needs extra explanation before the tool submits.\n";
-    } else if (this.isFreeformRow(this.selectedIndex)) {
+    } else if (this.isFreeformRow(this.selectedIndex, filteredOptions)) {
       md += "## Custom response\n\n";
       md += "Open the editor to write **any** answer.\n\n";
       md += "*Use this when none of the listed options fit, or just start typing to answer directly.*\n";
     } else {
-      const selected = this.options[this.selectedIndex];
+      const selected = filteredOptions[this.selectedIndex];
       if (!selected) {
         md += "*No option selected*\n";
       } else {
@@ -596,70 +628,37 @@ export class WrappedSingleSelectList implements Component {
   }
 
   handleInput(data: string): void {
-    if (this.keybindings.matches(data, "tui.select.cancel")) {
-      this.onCancel?.();
-      return;
+    if (this.searchQuery && matchesKey(data, Key.escape)) { this.setSearchQuery(""); return; }
+    if (this.keybindings.matches(data, "tui.select.cancel")) { this.onCancel?.(); return; }
+    if (this.allowComment && isCommentToggleKey(data, this.commentToggleKey)) { this.toggleComment(); return; }
+    const filteredOptions = this.getFilteredOptions();
+    const count = this.getItemCount(filteredOptions);
+    if ((this.keybindings.matches(data, "tui.select.up") || matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.ctrl("k"))) && count > 0) {
+      this.selectedIndex = this.selectedIndex === 0 ? count - 1 : this.selectedIndex - 1; this.invalidate(); return;
     }
-
-    if (this.allowComment && isCommentToggleKey(data)) {
-      this.toggleComment();
-      return;
+    if ((this.keybindings.matches(data, "tui.select.down") || matchesKey(data, Key.tab) || matchesKey(data, Key.ctrl("j"))) && count > 0) {
+      this.selectedIndex = this.selectedIndex === count - 1 ? 0 : this.selectedIndex + 1; this.invalidate(); return;
     }
-
-    const count = this.getItemCount();
-
-    if ((this.keybindings.matches(data, "tui.select.up") || matchesKey(data, Key.shift("tab"))) && count > 0) {
-      this.selectedIndex = this.selectedIndex === 0 ? count - 1 : this.selectedIndex - 1;
-      this.invalidate();
-      return;
-    }
-
-    if ((this.keybindings.matches(data, "tui.select.down") || matchesKey(data, Key.tab)) && count > 0) {
-      this.selectedIndex = this.selectedIndex === count - 1 ? 0 : this.selectedIndex + 1;
-      this.invalidate();
-      return;
-    }
-
     const printableInput = this.getPrintableInput(data);
-    if (printableInput && this.isFreeformRow(this.selectedIndex)) {
-      this.onEnterFreeform?.(printableInput);
+    if (printableInput && this.isFreeformRow(this.selectedIndex, filteredOptions)) {
+      this.onEnterFreeform?.(this.searchQuery + printableInput);
       return;
     }
-
     const numMatch = data.match(/^[1-9]$/);
-    if (numMatch && this.options.length > 0) {
+    if (numMatch && filteredOptions.length > 0) {
       const idx = Number.parseInt(numMatch[0], 10) - 1;
-      if (idx >= 0 && idx < this.options.length) {
-        this.selectedIndex = idx;
-        this.invalidate();
-        return;
-      }
+      if (idx >= 0 && idx < filteredOptions.length) { this.selectedIndex = idx; this.invalidate(); return; }
     }
-
-    if (matchesKey(data, Key.space) && count > 0 && this.isCommentToggleRow(this.selectedIndex)) {
-      this.toggleComment();
-      return;
-    }
-
+    if (matchesKey(data, Key.space) && count > 0 && this.isCommentToggleRow(this.selectedIndex, filteredOptions)) { this.toggleComment(); return; }
     if (this.keybindings.matches(data, "tui.select.confirm") && count > 0) {
-      if (this.isCommentToggleRow(this.selectedIndex)) {
-        this.toggleComment();
-        return;
-      }
-      if (this.isFreeformRow(this.selectedIndex)) {
-        this.onEnterFreeform?.();
-        return;
-      }
-
-      const result = this.options[this.selectedIndex]?.title;
-      if (result) this.onSubmit?.(result);
-      else this.onCancel?.();
+      if (this.isCommentToggleRow(this.selectedIndex, filteredOptions)) { this.toggleComment(); return; }
+      if (this.isFreeformRow(this.selectedIndex, filteredOptions)) { this.onEnterFreeform?.(this.searchQuery || undefined); return; }
+      const result = filteredOptions[this.selectedIndex]?.title;
+      if (result) this.onSubmit?.(result); else this.onCancel?.();
       return;
     }
-
-    if (printableInput && this.allowFreeform) {
-      this.onEnterFreeform?.(printableInput);
-    }
+    if (this.keybindings.matches(data, "tui.editor.deleteCharBackward") || matchesKey(data, Key.backspace)) { this.popSearchCharacter(); return; }
+    if (printableInput) this.setSearchQuery(this.searchQuery + printableInput);
   }
 
   render(width: number): string[] {
@@ -667,17 +666,18 @@ export class WrappedSingleSelectList implements Component {
       return this.cachedLines;
     }
 
-    const count = this.getItemCount();
+    const filteredOptions = this.getFilteredOptions();
+    const count = this.getItemCount(filteredOptions);
     this.selectedIndex = count > 0 ? Math.max(0, Math.min(this.selectedIndex, count - 1)) : 0;
 
-    const splitPane = this.getSplitPaneWidths(width);
+    const splitPane = this.layout === "list" ? null : this.getSplitPaneWidths(width);
     let lines: string[];
 
     if (!splitPane) {
-      lines = this.buildListLines(width);
+      lines = this.buildListLines(width, filteredOptions);
     } else {
-      const listLines = this.buildListLines(splitPane.left, true);
-      const previewLines = this.buildPreviewLines(splitPane.right, this.maxVisibleRows);
+      const listLines = this.buildListLines(splitPane.left, filteredOptions, true);
+      const previewLines = this.buildPreviewLines(splitPane.right, filteredOptions, this.maxVisibleRows);
       const rowCount = Math.min(this.maxVisibleRows, Math.max(listLines.length, previewLines.length));
       const separator = this.theme.fg("dim", SINGLE_SELECT_SPLIT_PANE_SEPARATOR);
       lines = Array.from({ length: rowCount }, (_, index) => {

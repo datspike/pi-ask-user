@@ -56,6 +56,7 @@ export class BatchAskComponent implements Component {
   private multiSelectList?: MultiSelectList;
   private editor?: Editor;
   private _focused = false;
+  private viewportOffset = 0;
   private lastSelectConfirmAt?: number;
 
   constructor(
@@ -351,6 +352,11 @@ export class BatchAskComponent implements Component {
   }
 
   handleInput(data: string): void {
+    if (this.controller.mode !== "freeform") {
+      if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("d"))) { this.viewportOffset += 4; this.tui.requestRender(); return; }
+      if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.ctrl("u"))) { this.viewportOffset = Math.max(0, this.viewportOffset - 4); this.tui.requestRender(); return; }
+      if (matchesKey(data, Key.home)) { this.viewportOffset = 0; this.tui.requestRender(); return; }
+    }
     if (matchesKey(data, BATCH_SUBMIT_KEY)) {
       this.lastSelectConfirmAt = undefined;
       this.submitBatch();
@@ -405,65 +411,48 @@ export class BatchAskComponent implements Component {
 
   render(width: number): string[] {
     const innerWidth = Math.max(1, width - BOX_BORDER_OVERHEAD);
-    const body: string[] = [];
-    const title = this.title ?? "Clarification batch";
     const currentQuestion = this.getCurrentQuestion();
-
-    body.push(this.theme.fg("accent", this.theme.bold(title)));
+    const prompt: string[] = [];
+    const questionLabel = `Q${this.controller.questionIndex + 1}. ${currentQuestion.question}`;
+    for (const line of wrapTextWithAnsi(questionLabel, Math.max(10, innerWidth))) prompt.push(this.theme.fg("accent", this.theme.bold(line)));
+    prompt.push(this.theme.fg("dim", currentQuestion.required ? "Required" : "Optional"));
+    prompt.push("", this.theme.fg("accent", this.theme.bold(`Questions (${this.controller.questionIndex + 1}/${this.questions.length})`)));
+    for (const [index, question] of this.questions.entries()) prompt.push(truncateToWidth(this.buildQuestionStatusLabel(question, index), innerWidth, ""));
+    prompt.push("", this.theme.fg("accent", this.theme.bold(this.title ?? "Clarification batch")));
     if (this.context) {
-      body.push("");
-      body.push(this.theme.fg("accent", this.theme.bold("Context:")));
-      for (const line of wrapTextWithAnsi(this.context, Math.max(10, innerWidth))) {
-        body.push(this.theme.fg("dim", line));
-      }
+      const contextLines = wrapTextWithAnsi(this.context, Math.max(10, innerWidth));
+      prompt.push(this.theme.fg("dim", `Context (${contextLines.length} lines)`), ...contextLines.map((line) => this.theme.fg("dim", line)));
     }
 
-    body.push("");
-    body.push(this.theme.fg("accent", this.theme.bold(`Questions (${this.controller.questionIndex + 1}/${this.questions.length})`)));
-    for (const [index, question] of this.questions.entries()) {
-      body.push(truncateToWidth(this.buildQuestionStatusLabel(question, index), innerWidth, ""));
-    }
+    const maxHeight = Math.max(12, Math.floor(this.tui.terminal.rows * 0.85));
+    const bodyCapacity = Math.max(1, maxHeight - 2);
+    const help = this.buildHelpText();
+    const modeBudget = Math.max(3, Math.min(7, bodyCapacity - 3));
+    const promptBudget = Math.max(1, bodyCapacity - modeBudget - 2);
+    const maxOffset = Math.max(0, prompt.length - promptBudget);
+    this.viewportOffset = Math.min(this.viewportOffset, maxOffset);
+    const promptLines = prompt.slice(this.viewportOffset, this.viewportOffset + promptBudget);
+    if (this.viewportOffset > 0 && promptLines.length) promptLines[0] = this.theme.fg("dim", "↑ ") + promptLines[0];
+    if (this.viewportOffset + promptBudget < prompt.length && promptLines.length) { const i = promptLines.length - 1; promptLines[i] = this.theme.fg("dim", "↓ ") + promptLines[i]; }
 
-    body.push("");
-    body.push(this.theme.fg("accent", this.theme.bold(`Q${this.controller.questionIndex + 1}. ${currentQuestion.question}`)));
-    body.push(this.theme.fg("dim", currentQuestion.required ? "Required" : "Optional"));
-    body.push("");
-
+    let modeLines: string[];
     if (this.controller.mode === "freeform") {
-      body.push(this.theme.fg("accent", this.theme.bold("Answer")));
       const editor = this.ensureEditor() as any;
-      if (typeof editor.render === "function") {
-        body.push(...editor.render(innerWidth));
-      } else {
-        const draft = this.controller.getCurrentEditorText();
-        body.push(this.theme.fg("dim", draft || "Type your answer and press Enter to save."));
-      }
+      const editorLines = typeof editor.render === "function"
+        ? editor.render(innerWidth)
+        : [this.theme.fg("dim", this.controller.getCurrentEditorText() || "Type your answer and press Enter to save.")];
+      modeLines = [this.theme.fg("accent", this.theme.bold("Answer")), ...editorLines];
     } else if (currentQuestion.allowMultiple) {
-      body.push(...this.ensureMultiSelectList().render(innerWidth));
+      modeLines = this.ensureMultiSelectList().render(innerWidth);
     } else {
-      body.push(...this.ensureSingleSelectList().render(innerWidth));
+      this.ensureSingleSelectList().setMaxVisibleRows(modeBudget);
+      modeLines = this.ensureSingleSelectList().render(innerWidth);
     }
-
-    body.push("");
-    body.push(this.buildHelpText());
-
+    modeLines = modeLines.slice(0, modeBudget);
+    const body = [...promptLines, "", ...modeLines, help];
     const borderColor = (s: string) => this.theme.fg("accent", s);
-    const titleColor = (s: string) => this.theme.fg("dim", this.theme.bold(s));
-    const top = new BoxBorderTop(
-      borderColor,
-      `ask_user [batch ${this.controller.questionIndex + 1}/${this.questions.length}]`,
-      titleColor,
-    ).render(width)[0] ?? "";
-    const bottom = new BoxBorderBottom(
-      borderColor,
-      `v${ASK_USER_VERSION}`,
-      (s: string) => this.theme.fg("dim", s),
-    ).render(width)[0] ?? "";
-
-    const wrappedBody = body.map((line) => {
-      const padded = truncateToWidth(line, innerWidth, "", true);
-      return `${borderColor(BOX_BORDER_LEFT)}${padded}${borderColor(BOX_BORDER_RIGHT)}`;
-    });
-    return [top, ...wrappedBody, bottom];
+    const top = new BoxBorderTop(borderColor, `ask_user [batch ${this.controller.questionIndex + 1}/${this.questions.length}]`, (s) => this.theme.fg("dim", this.theme.bold(s))).render(width)[0] ?? "";
+    const bottom = new BoxBorderBottom(borderColor, `v${ASK_USER_VERSION}`, (s) => this.theme.fg("dim", s)).render(width)[0] ?? "";
+    return [top, ...body.slice(0, bodyCapacity).map((line) => `${borderColor(BOX_BORDER_LEFT)}${truncateToWidth(line, innerWidth, "", true)}${borderColor(BOX_BORDER_RIGHT)}`), bottom];
   }
 }

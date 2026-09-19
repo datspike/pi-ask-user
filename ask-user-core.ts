@@ -10,6 +10,11 @@ export interface SingleAskParams {
   allowMultiple?: boolean;
   allowFreeform?: boolean;
   allowComment?: boolean;
+  displayMode?: "overlay" | "inline";
+  singleSelectLayout?: "auto" | "list";
+  contextExpanded?: boolean;
+  overlayToggleKey?: string | null;
+  commentToggleKey?: string | null;
   timeout?: number;
 }
 
@@ -27,6 +32,8 @@ export interface BatchAskParams {
   title?: string;
   context?: string;
   questions: BatchQuestionInput[];
+  displayMode?: "overlay" | "inline";
+  overlayToggleKey?: string | null;
   timeout?: number;
 }
 
@@ -84,6 +91,7 @@ export interface AskToolDetails {
   questions?: BatchQuestion[];
   response: AskResponse | null;
   cancelled: boolean;
+  outcome: "answered" | "cancelled" | "timeout" | "aborted";
 }
 
 export type AskUIResult = AskResponse;
@@ -255,10 +263,14 @@ export function normalizeBatchQuestions(rawQuestions: BatchQuestionInput[]): Bat
 
   const seenIds = new Set<string>();
   return rawQuestions.map((question, index) => {
-    const id = question?.id?.trim();
+    const rawId = question?.id;
+    const id = typeof rawId === "string" ? rawId : undefined;
     const prompt = question?.question?.trim();
     if (!id) {
       throw new Error(`Batch question ${index + 1} is missing a valid id.`);
+    }
+    if (id !== id.trim()) {
+      throw new Error(`Batch question ${index + 1} id must not have leading or trailing whitespace.`);
     }
     if (seenIds.has(id)) {
       throw new Error(`Batch question ids must be unique. Duplicate id: ${id}`);

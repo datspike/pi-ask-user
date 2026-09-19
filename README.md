@@ -28,7 +28,8 @@ High-quality video: [ask-user-demo.mp4](./media/ask-user-demo.mp4)
 - Wrapped option rows with titles and descriptions
 - Responsive split-pane details preview on wide terminals with single-column fallback on narrow terminals
 - Context display support
-- Overlay mode that floats over the conversation and preserves surrounding context
+- Overlay and inline display modes, selected per call or with `PI_ASK_USER_DISPLAY_MODE`
+- Hide and restore an active overlay with `alt+o` (configurable with `PI_ASK_USER_OVERLAY_TOGGLE_KEY`) without recreating its component state
 - Pi-TUI-aligned keybinding and editor behavior
 - Custom TUI rendering for tool calls and results
 - Graceful fallback when interactive custom UI is unavailable
@@ -58,7 +59,7 @@ The bundled skill is self-contained in `skills/ask-user/SKILL.md`.
 ### This fork from npm
 
 ```bash
-pi install npm:@datspike/pi-ask-user@0.7.0
+pi install npm:@datspike/pi-ask-user@0.15.0
 ```
 
 ### This fork from git
@@ -100,9 +101,14 @@ The registered tool name is:
 | `context` | `string?` | - | Relevant context summary shown before the question |
 | `options` | `{title: string, description?: string}[]?` | `[]` | Multiple-choice options exposed to the model |
 | `allowMultiple` | `boolean?` | `false` | Enable multi-select mode |
-| `allowFreeform` | `boolean?` | `true` | Allow a custom response via the freeform option or by typing directly in the overlay |
-| `allowComment` | `boolean?` | `false` | Expose a user-toggleable extra-context option in the overlay (`ctrl+g` or the toggle row) and collect an optional comment in fallback dialogs |
-| `timeout` | `number?` | - | Auto-dismiss after N ms and return `null` if the prompt times out |
+| `allowFreeform` | `boolean?` | `true` | Add a custom-response row. Printable input filters single-select options first; activating the custom row or confirming a no-match carries the filter text into the editor |
+| `allowComment` | `boolean?` | env / `false` | Expose a user-toggleable extra-context option and collect an optional comment; overrides `PI_ASK_USER_ALLOW_COMMENT` |
+| `displayMode` | `"overlay" \| "inline"?` | env / `"overlay"` | UI presentation; overrides `PI_ASK_USER_DISPLAY_MODE` |
+| `singleSelectLayout` | `"auto" \| "list"?` | env / `"auto"` | Use responsive preview panes or force a list; overrides `PI_ASK_USER_SINGLE_SELECT_LAYOUT` |
+| `contextExpanded` | `boolean?` | env / `false` | Initial state for oversized context; overrides `PI_ASK_USER_CONTEXT_EXPANDED` |
+| `overlayToggleKey` | `string?` | env / `"alt+o"` | Hide/restore shortcut; overrides `PI_ASK_USER_OVERLAY_TOGGLE_KEY`; use `off` to disable |
+| `commentToggleKey` | `string?` | env / `"ctrl+g"` | Comment toggle shortcut; overrides `PI_ASK_USER_COMMENT_TOGGLE_KEY` |
+| `timeout` | `number?` | - | Auto-dismiss after N ms; returns `cancelled: true` with `outcome: "timeout"` |
 
 ### Batch clarification mode
 
@@ -112,7 +118,17 @@ The registered tool name is:
 | `title` | `string?` | - | Short title shown above the batch UI |
 | `context` | `string?` | - | Relevant context summary shown before the batch |
 | `questions` | `BatchQuestion[]` | *required* | Related clarification questions; must contain 2-7 questions |
-| `timeout` | `number?` | - | Auto-dismiss after N ms and return `null` if the prompt times out |
+| `displayMode` | `"overlay" \| "inline"?` | env / `"overlay"` | UI presentation; parameter overrides environment |
+| `overlayToggleKey` | `string?` | env / `"alt+o"` | Hide/restore shortcut in overlay mode |
+| `timeout` | `number?` | - | Auto-dismiss after N ms; returns `cancelled: true` with `outcome: "timeout"` |
+
+### Environment and keyboard behavior
+
+Configuration precedence is per-call parameter, matching environment variable, then built-in default. Supported variables are `PI_ASK_USER_DISPLAY_MODE`, `PI_ASK_USER_SINGLE_SELECT_LAYOUT`, `PI_ASK_USER_CONTEXT_EXPANDED`, `PI_ASK_USER_ALLOW_COMMENT`, `PI_ASK_USER_OVERLAY_TOGGLE_KEY`, `PI_ASK_USER_COMMENT_TOGGLE_KEY`, and `PI_ASK_USER_EMIT_FULL_EVENTS`. Boolean values accept `1/true/yes/on` and `0/false/no/off`. Shortcut values accept `off`, `none`, `disabled`, `false`, or an empty string to disable the shortcut.
+
+Use `ctrl+j` / `ctrl+k` as down/up aliases. Searchable single-select uses printable input as a fuzzy filter; Backspace removes filter characters and Escape clears the filter. Oversized context starts from `contextExpanded`, then can be expanded and collapsed with the first free key among `ctrl+e`, `ctrl+x`, and `ctrl+y`. This avoids configured overlay/comment shortcuts. If overlay and comment shortcuts are identical, overlay hide/restore takes priority and comment remains available through its selectable row. In overlay mode the help includes the hide shortcut; hiding also emits a notification with the restore key.
+
+`herdr:blocked` emits `{ active: true, label: "Waiting for user response" }` while interactive input is pending and `{ active: false }` on every exit path. `ask:answered` and `ask:cancelled` are privacy-minimal by default: they omit context, option lists, question packets, and answer text. Set `PI_ASK_USER_EMIT_FULL_EVENTS=true` only when trusted consumers require full payloads.
 
 `BatchQuestion` reuses the current ask vocabulary where possible:
 
@@ -212,11 +228,12 @@ interface AskToolDetails {
   options?: QuestionOption[];
   questions?: BatchQuestion[];
   response: AskResponse | null;
-  cancelled: boolean;
+  cancelled: boolean; // compatibility flag: true for cancel, timeout, and abort
+  outcome: "answered" | "cancelled" | "timeout" | "aborted";
 }
 ```
 
-Single-question payloads and response variants remain unchanged. The batch result branch is returned only when `mode: "batch"` is used.
+Single-question payloads and response variants remain unchanged. The batch result branch is returned only when `mode: "batch"` is used. Configuration precedence is always per-call parameter, then the corresponding environment variable, then the documented default. Manual cancellation, timeout, and `AbortSignal` remain backward-compatible through `cancelled: true` and are distinguished by `outcome`.
 
 ## Changelog
 

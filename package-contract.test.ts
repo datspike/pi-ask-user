@@ -15,7 +15,7 @@ const packageJson = JSON.parse(readFileSync(PACKAGE_JSON_PATH, "utf8")) as {
 
 function collectTypeScriptFiles(directory: string): string[] {
   return readdirSync(directory).flatMap((entry) => {
-    if (entry === "node_modules" || entry === ".git") return [];
+    if (entry === "node_modules" || entry === ".git" || entry === ".runtime") return [];
     const absolutePath = path.join(directory, entry);
     return statSync(absolutePath).isDirectory() ? collectTypeScriptFiles(absolutePath) : absolutePath.endsWith(".ts") ? [absolutePath] : [];
   });
@@ -29,8 +29,8 @@ describe("package contract", () => {
 
   test("uses the current Pi peer packages with the supported compatibility floor", () => {
     expect(packageJson.peerDependencies).toEqual({
-      "@earendil-works/pi-coding-agent": ">=0.74.0",
-      "@earendil-works/pi-tui": ">=0.74.0",
+      "@earendil-works/pi-coding-agent": ">=0.85.1",
+      "@earendil-works/pi-tui": ">=0.85.1",
       "@sinclair/typebox": "*",
     });
   });
@@ -53,7 +53,9 @@ describe("package contract", () => {
       "single-select-layout.ts",
       "skills",
       "README.md",
+      "CHANGELOG.md",
       "LICENSE",
+      "NOTICE",
     ];
 
     expect(packageJson.files).toEqual(runtimeFiles);

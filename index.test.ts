@@ -102,6 +102,10 @@ beforeAll(() => {
          ctrl: (key: string) => `ctrl+${key}`,
          shift: (key: string) => `shift+${key}`,
          tab: "tab",
+         pageUp: "pageUp",
+         pageDown: "pageDown",
+         home: "home",
+         end: "end",
       },
       Markdown: class extends MockText { },
       matchesKey: (data: string, key: string) => data === key,
@@ -187,6 +191,14 @@ describe("ask_user", () => {
       expect(topLevelOptions.items.properties.description.kind).toBe("optional");
       expect(nestedOptions.items.kind).toBe("object");
       expect(nestedOptions.items.properties.title.kind).toBe("string");
+   });
+
+   test("publishes and enforces the single/batch mode enum", async () => {
+      const tool = await setupTool();
+      const serialized = JSON.stringify(tool.parameters.properties.mode);
+      expect(serialized).toContain("single");
+      expect(serialized).toContain("batch");
+      await expect(tool.execute("id", { mode: "other", question: "No" }, undefined, undefined, {})).rejects.toThrow("Unsupported ask_user mode");
    });
 
    test("prepares legacy strings and defensive aliases before schema validation", async () => {
@@ -473,7 +485,7 @@ describe("ask_user", () => {
       expect(editorInputs).toEqual(["ctrl+enter"]);
    });
 
-   test("starts direct freeform entry from typed input in single-select mode", async () => {
+   test("filters searchable single-select options from typed input", async () => {
       const tool = await setupTool();
       editorText = "";
 
@@ -501,7 +513,9 @@ describe("ask_user", () => {
                   );
 
                   component.handleInput("b");
-                  expect(editorText).toBe("b");
+                  expect(component.render(60).join("\n")).toContain("Filter: b");
+                  expect(component.render(60).join("\n")).toContain("Beta");
+                  expect(component.render(60).join("\n")).not.toContain("Alpha");
                   component.handleInput("enter");
                   return resolved ?? null;
                },
@@ -510,11 +524,11 @@ describe("ask_user", () => {
       );
 
       expect(result.isError).not.toBe(true);
-      expect(result.details.response).toEqual({ kind: "freeform", text: "b" });
+      expect(result.details.response).toEqual({ kind: "selection", selections: ["Beta"] });
       expect(result.details.cancelled).toBe(false);
    });
 
-   test("does not advertise type-to-filter in single-select help text", async () => {
+   test("renders the single-select filter affordance", async () => {
       const tool = await setupTool();
       let helpText = "";
 
@@ -539,7 +553,7 @@ describe("ask_user", () => {
                   );
 
                   helpText = (component as any).helpText.render().join("\n");
-                  expect(component.render(100).join("\n")).not.toContain("type to filter");
+                  expect(component.render(100).join("\n")).toContain("Filter: type to filter");
                   return null;
                },
             },
@@ -550,7 +564,7 @@ describe("ask_user", () => {
       expect(helpText).not.toContain("type filter");
    });
 
-   test("keeps non-freeform single-select option-driven when printable input is typed", async () => {
+   test("fuzzy-filters non-freeform single-select options", async () => {
       const tool = await setupTool();
 
       const result = await tool.execute(
@@ -576,7 +590,6 @@ describe("ask_user", () => {
                      },
                   );
 
-                  component.handleInput("7");
                   component.handleInput("b");
                   component.handleInput("enter");
                   return resolved ?? null;
@@ -586,7 +599,7 @@ describe("ask_user", () => {
       );
 
       expect(result.isError).not.toBe(true);
-      expect(result.details.response).toEqual({ kind: "selection", selections: ["Alpha"] });
+      expect(result.details.response).toEqual({ kind: "selection", selections: ["Beta 7"] });
       expect(result.details.cancelled).toBe(false);
    });
 
@@ -633,7 +646,7 @@ describe("ask_user", () => {
       expect(result.isError).not.toBe(true);
       expect(result.details.response).toEqual({ kind: "freeform", text: "custom from editor" });
       expect(result.details.cancelled).toBe(false);
-      expect(answeredEvent?.payload.response).toEqual({ kind: "freeform", text: "custom from editor" });
+      expect(answeredEvent?.payload.response).toEqual({ kind: "freeform" });
       expect(editorInputs).toEqual(["enter"]);
    });
 
@@ -666,6 +679,7 @@ describe("ask_user", () => {
 
                   component.handleInput("down");
                   component.handleInput("down");
+                  component.handleInput("enter");
                   component.handleInput("1");
                   expect(editorText).toBe("1");
                   component.handleInput("enter");
@@ -789,6 +803,9 @@ describe("ask_user", () => {
                      () => { },
                   );
 
+                  component.handleInput("down");
+                  component.handleInput("down");
+                  component.handleInput("enter");
                   component.handleInput("x");
                   expect(editorText).toBe("x");
                   component.handleInput("backspace");
@@ -1288,6 +1305,8 @@ describe("ask_user", () => {
 
       expect(result.details.cancelled).toBe(true);
       expect(result.details.response).toBeNull();
+      expect(result.details.outcome).toBe("timeout");
+      expect(result.content[0].text).toContain("timed out");
    });
 
    test("keeps pre-abort and confirmed mid-flight abort as cancelled results", async () => {
@@ -1296,7 +1315,7 @@ describe("ask_user", () => {
       preAborted.abort();
 
       const preResult = await tool.execute("tool-call-id", { question: "Choose" }, preAborted.signal, undefined, {});
-      expect(preResult.details).toEqual({ mode: "single", response: null, cancelled: true });
+      expect(preResult.details).toEqual({ mode: "single", response: null, cancelled: true, outcome: "aborted" });
 
       const midFlight = new AbortController();
       const midResult = await tool.execute(
@@ -1316,6 +1335,7 @@ describe("ask_user", () => {
       );
       expect(midResult.details.cancelled).toBe(true);
       expect(midResult.details.response).toBeNull();
+      expect(midResult.details.outcome).toBe("aborted");
    });
 
    test("returns cancellation when single fallback aborts before returning a value", async () => {
@@ -1702,6 +1722,9 @@ describe("ask_user", () => {
                      () => { },
                   );
 
+                  component.handleInput("down");
+                  component.handleInput("down");
+                  component.handleInput("enter");
                   component.handleInput("x");
                   expect(editorText).toBe("x");
                   component.handleInput("backspace");
@@ -1811,6 +1834,9 @@ describe("ask_user", () => {
                   component.handleInput("enter");
                   component.handleInput("right");
                   component.handleInput("left");
+                  component.handleInput("down");
+                  component.handleInput("down");
+                  component.handleInput("enter");
                   component.handleInput("x");
                   expect(editorText).toBe("x");
                   editorText = "";
@@ -2377,7 +2403,7 @@ describe("ask_user", () => {
          expect(result.details.cancelled).toBe(true);
          expect(result.details.response).toBeNull();
          expect(cancelledEvent?.payload.mode).toBe("batch");
-         expect(cancelledEvent?.payload.questions).toHaveLength(2);
+         expect(cancelledEvent?.payload.questions).toBeUndefined();
       });
 
       test("single-question overlay behavior is unchanged when arrow keys are pressed", async () => {
@@ -2506,4 +2532,128 @@ describe("ask_user", () => {
          expect(capturedOpts).toEqual({ timeout: 5000 });
       });
    });
+
+   test("uses inline custom UI when requested", async () => {
+      const tool = await setupTool();
+      let capturedOptions: any = "unset";
+      await tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"], displayMode: "inline" },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               custom: async (_factory: any, options: any) => {
+                  capturedOptions = options;
+                  return null;
+               },
+            },
+         },
+      );
+      expect(capturedOptions).toBeUndefined();
+   });
+
+   test("hides and restores the same overlay through the configured shortcut", async () => {
+      const tool = await setupTool();
+      let inputListener: ((data: string) => any) | undefined;
+      let hidden = false;
+      let removed = false;
+      let factoryCalls = 0;
+      const handle = {
+         hide() {},
+         setHidden(value: boolean) { hidden = value; },
+         isHidden() { return hidden; },
+         focus() {},
+         unfocus() {},
+         isFocused() { return true; },
+      };
+
+      await tool.execute(
+         "tool-call-id",
+         { question: "Choose", options: ["A"], overlayToggleKey: "alt+h" },
+         undefined,
+         undefined,
+         {
+            hasUI: true,
+            ui: {
+               onTerminalInput(listener: (data: string) => any) {
+                  inputListener = listener;
+                  return () => { removed = true; };
+               },
+               custom: async (factory: any, options: any) => {
+                  factoryCalls += 1;
+                  options.onHandle(handle);
+                  inputListener?.("alt+h");
+                  expect(hidden).toBe(true);
+                  inputListener?.("alt+h");
+                  expect(hidden).toBe(false);
+                  return null;
+               },
+            },
+         },
+      );
+
+      expect(factoryCalls).toBe(1);
+      expect(removed).toBe(true);
+   });
+   test("keeps choices and help visible for long single and batch prompts and scrolls only select prompts", async () => {
+      const tool = await setupTool();
+      const longQuestion = Array.from({ length: 30 }, (_, index) => `segment-${index}`).join(" ");
+      const renders: string[] = [];
+      for (const params of [
+         { question: longQuestion, options: ["Visible choice"] },
+         { mode: "batch", questions: [
+            { id: "one", question: longQuestion, options: ["Visible choice"] },
+            { id: "two", question: "Second", options: ["Yes"] },
+         ] },
+      ]) {
+         await tool.execute("id", params, undefined, undefined, {
+            hasUI: true,
+            ui: {
+               custom: async (factory: any) => {
+                  const tui = { terminal: { rows: 12 }, requestRender() {} };
+                  const component = factory(tui, createTheme(), createKeybindings(), () => {});
+                  const before = component.render(56).join("\n");
+                  const { Key } = await import("@earendil-works/pi-tui");
+                  component.handleInput(Key.pageDown);
+                  const after = component.render(56).join("\n");
+                  renders.push(before, after);
+                  return null;
+               },
+            },
+         });
+      }
+      expect(renders[0]).toContain("Visible choice");
+      expect(renders[0]).toContain("navigate");
+      expect(renders[1]).not.toBe(renders[0]);
+      expect(renders[2]).toContain("Visible choice");
+      expect(renders[2]).toContain("navigate");
+      expect(renders[3]).not.toBe(renders[2]);
+   });
+
+   test("reports timeout content consistently for a freeform-only single question", async () => {
+      const tool = await setupTool();
+      const result = await tool.execute("id", { question: "Answer", timeout: 1 }, undefined, undefined, {
+         hasUI: true,
+         ui: { input: async () => { await Bun.sleep(2); return undefined; } },
+      });
+      expect(result.details.outcome).toBe("timeout");
+      expect(result.content[0].text).toBe("The question timed out");
+   });
+
+   test("emits balanced herdr blocked lifecycle events without prompt contents", async () => {
+      const tool = await setupTool();
+      await tool.execute("id", { question: "Private question" }, undefined, undefined, {
+         hasUI: true,
+         ui: { input: async () => "answer" },
+      });
+      const blocked = emittedEvents.filter((event) => event.name === "herdr:blocked").map((event) => event.payload);
+      expect(blocked).toEqual([
+         { active: true, label: "Waiting for user response" },
+         { active: false },
+      ]);
+      expect(JSON.stringify(blocked)).not.toContain("Private question");
+   });
+
 });

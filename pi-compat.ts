@@ -1,5 +1,5 @@
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, KeybindingsManager, MarkdownTheme, TUI } from "@earendil-works/pi-tui";
+import type { Component, KeybindingsManager, MarkdownTheme, OverlayHandle, TUI } from "@earendil-works/pi-tui";
 
 import { createRequire } from "node:module";
 
@@ -126,6 +126,8 @@ export async function showAskOverlay<Result>(
   signal: AbortSignal | undefined,
   timeout: number | undefined,
   factory: (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: Result | null) => void) => Component,
+  displayMode: "overlay" | "inline" = "overlay",
+  onHandle?: (handle: OverlayHandle) => void,
 ): Promise<Result | null | undefined> {
   return custom<Result | null>(
     (tui: TUI, theme: Theme, keybindings: KeybindingsManager, done: (result: Result | null) => void) => {
@@ -137,6 +139,6 @@ export async function showAskOverlay<Result>(
       cleanup = bindOverlayLifecycle(signal, timeout, finish);
       return factory(tui, theme, keybindings, finish);
     },
-    ASK_OVERLAY_OPTIONS,
+    displayMode === "inline" ? undefined : { ...ASK_OVERLAY_OPTIONS, ...(onHandle ? { onHandle } : {}) },
   );
 }

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.15.0] - 2026-09-17
+
+### Changed
+
+- Forward-ported the compatible upstream `pi-ask-user@0.15.0` behavior while retaining the fork's modular single and batch contracts.
+- Added per-call and environment-selected overlay/inline display mode, configurable overlay hide/restore, configurable comment toggling, `PI_ASK_USER_ALLOW_COMMENT`, and `ctrl+j` / `ctrl+k` option navigation.
+- Restored upstream search-first single-select behavior: printable input fuzzy-filters options, clearing restores the list, and explicit/no-match freeform transitions preserve the query as the editor draft.
+- Added `herdr:blocked` lifecycle events and privacy-minimal `ask:*` events, with `PI_ASK_USER_EMIT_FULL_EVENTS=true` as an explicit opt-in.
+- Added structured `outcome` values that distinguish answered, manual cancellation, timeout, and `AbortSignal` termination while retaining `cancelled` compatibility.
+- Raised the supported Pi compatibility floor to the currently verified `0.85.1` line.
+
+### Fixed
+
+- Preserved active single and batch component state while an overlay is hidden and restored.
+- Wrapped and bounded long single and batch question content with a scrollable viewport so options, editors, and help remain reachable.
+- Made overlay/comment/context shortcut collisions deterministic, kept `contextExpanded` initial-only, and exposed overlay hide plus context expand/collapse hints.
+- Batch IDs with leading or trailing whitespace are now rejected instead of being silently changed.
+
 ## [0.7.0](https://github.com/datspike/pi-ask-user/releases/tag/v0.7.0) - 2026-04-19
 
 ### Added
