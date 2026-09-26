@@ -109,6 +109,8 @@ beforeAll(() => {
       },
       Markdown: class extends MockText { },
       matchesKey: (data: string, key: string) => data === key,
+      isKeyRelease: () => false,
+      isKeyRepeat: () => false,
       Spacer: class { render() { return []; } },
       Text: MockText,
       truncateToWidth: (text: string) => text,
@@ -191,6 +193,8 @@ describe("ask_user", () => {
       expect(topLevelOptions.items.properties.description.kind).toBe("optional");
       expect(nestedOptions.items.kind).toBe("object");
       expect(nestedOptions.items.properties.title.kind).toBe("string");
+      expect(tool.parameters.properties).not.toHaveProperty("allowFreeform");
+      expect(tool.parameters.properties.questions.item.items.properties).not.toHaveProperty("allowFreeform");
    });
 
    test("publishes and enforces the single/batch mode enum", async () => {
@@ -564,7 +568,7 @@ describe("ask_user", () => {
       expect(helpText).not.toContain("type filter");
    });
 
-   test("fuzzy-filters non-freeform single-select options", async () => {
+   test("legacy allowFreeform=false still shows custom answers in single overlay", async () => {
       const tool = await setupTool();
 
       const result = await tool.execute(
@@ -590,6 +594,7 @@ describe("ask_user", () => {
                      },
                   );
 
+                  expect(component.render(80).join("\n")).toContain("Type something");
                   component.handleInput("b");
                   component.handleInput("enter");
                   return resolved ?? null;
@@ -1380,8 +1385,8 @@ describe("ask_user", () => {
                title: "Clarify scope",
                context: "Need a few details before implementation.",
                questions: [
-                  { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
-                  { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
+                  { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"], allowFreeform: false },
+                  { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"], allowFreeform: false }
                ],
             },
             undefined,
@@ -1423,6 +1428,7 @@ describe("ask_user", () => {
          expect(rendered).toContain("Questions (2/2)");
          expect(rendered).toContain("1. Which surface is in scope?");
          expect(rendered).toContain("2. Must the current behavior stay exact?");
+         expect(rendered).toContain("custom response");
       } finally {
          Date.now = originalDateNow;
       }
@@ -1862,7 +1868,7 @@ describe("ask_user", () => {
       expect(renderedOnReturn).not.toContain("Which surface is in scope? — pending");
    });
 
-   test("shows arrow-key hints in the batch overlay help text", async () => {
+   test("shows the overlay shortcut without transition-navigation hints in the batch footer", async () => {
       const tool = await setupTool();
       let rendered = "";
 
@@ -1871,6 +1877,7 @@ describe("ask_user", () => {
          {
             mode: "batch",
             title: "Clarify scope",
+            overlayToggleKey: "alt+h",
             questions: [
                { id: "surface", question: "Which surface is in scope?", options: ["Overlay", "Fallback"] },
                { id: "compat", question: "Must the current behavior stay exact?", options: ["Yes", "No"] },
@@ -1896,9 +1903,28 @@ describe("ask_user", () => {
          },
       );
 
-      expect(rendered).toContain("←→ switch question");
-      expect(rendered).toContain("ctrl+n next");
-      expect(rendered).toContain("ctrl+p prev");
+      expect(rendered).toContain("alt+h hide");
+      expect(rendered).not.toContain("switch question");
+      expect(rendered).not.toContain("ctrl+n");
+      expect(rendered).not.toContain("ctrl+p");
+
+   });
+
+   test("batch inline footer does not show an overlay hide shortcut", async () => {
+      const tool = await setupTool();
+      let rendered = "";
+      await tool.execute("id", { mode: "batch", displayMode: "inline", overlayToggleKey: "alt+h", questions: [
+         { id: "one", question: "First?", options: ["A"] },
+         { id: "two", question: "Second?", options: ["B"] },
+      ] }, undefined, undefined, {
+         hasUI: true,
+         ui: { custom: async (factory: any) => {
+            const component = factory({ requestRender() {}, terminal: { rows: 24 } }, createTheme(), createKeybindings(), () => null);
+            rendered = component.render(100).join("\n");
+            return null;
+         } },
+      });
+      expect(rendered).not.toContain("hide");
    });
 
    test("keeps the unanswered required batch question active when submit is attempted early", async () => {
@@ -1982,7 +2008,7 @@ describe("ask_user", () => {
 
 
    describe("RPC fallback (custom() returns undefined)", () => {
-      test("single-select falls back to ctx.ui.select()", async () => {
+      test("legacy allowFreeform=false still permits a custom fallback answer", async () => {
          const tool = await setupTool();
          let selectTitle = "";
          let selectOptions: string[] = [];
@@ -2003,19 +2029,19 @@ describe("ask_user", () => {
                   select: async (title: string, opts: string[]) => {
                      selectTitle = title;
                      selectOptions = opts;
-                     return "Blue";
+                     return "✏️ Type custom response...";
                   },
-                  input: async () => undefined,
+                  input: async () => "Turquoise",
                },
             },
          );
 
          expect(result.isError).not.toBe(true);
-         expect(result.details.response).toEqual({ kind: "selection", selections: ["Blue"] });
+         expect(result.details.response).toEqual({ kind: "freeform", text: "Turquoise" });
          expect(result.details.cancelled).toBe(false);
-         expect(result.content[0].text).toBe("User answered: Blue");
+         expect(result.content[0].text).toBe("User answered: Turquoise");
          expect(selectTitle).toContain("Pick a color");
-         expect(selectOptions).toEqual(["Red", "Blue"]);
+         expect(selectOptions).toEqual(["Red", "Blue", "✏️ Type custom response..."]);
       });
 
       test("freeform-only result content includes the typed answer", async () => {
@@ -2554,48 +2580,57 @@ describe("ask_user", () => {
       expect(capturedOptions).toBeUndefined();
    });
 
-   test("hides and restores the same overlay through the configured shortcut", async () => {
+   test("uses f7 by default for single and batch overlays while allowing per-call overrides", async () => {
       const tool = await setupTool();
-      let inputListener: ((data: string) => any) | undefined;
-      let hidden = false;
-      let removed = false;
-      let factoryCalls = 0;
-      const handle = {
-         hide() {},
-         setHidden(value: boolean) { hidden = value; },
-         isHidden() { return hidden; },
-         focus() {},
-         unfocus() {},
-         isFocused() { return true; },
-      };
+      for (const { params, shortcut } of [
+         { params: { question: "Choose", options: ["A"] }, shortcut: "f7" },
+         { params: { mode: "batch", questions: [
+            { id: "first", question: "Choose", options: ["A"] },
+            { id: "second", question: "Confirm", options: ["Yes"] },
+         ] }, shortcut: "f7" },
+         { params: { question: "Choose", options: ["A"], overlayToggleKey: "alt+h" }, shortcut: "alt+h" },
+      ]) {
+         let inputListener: ((data: string) => any) | undefined;
+         let hidden = false;
+         let removed = false;
+         let factoryCalls = 0;
+         const handle = {
+            hide() {},
+            setHidden(value: boolean) { hidden = value; },
+            isHidden() { return hidden; },
+            focus() {},
+            unfocus() {},
+            isFocused() { return true; },
+         };
 
-      await tool.execute(
-         "tool-call-id",
-         { question: "Choose", options: ["A"], overlayToggleKey: "alt+h" },
-         undefined,
-         undefined,
-         {
-            hasUI: true,
-            ui: {
-               onTerminalInput(listener: (data: string) => any) {
-                  inputListener = listener;
-                  return () => { removed = true; };
-               },
-               custom: async (factory: any, options: any) => {
-                  factoryCalls += 1;
-                  options.onHandle(handle);
-                  inputListener?.("alt+h");
-                  expect(hidden).toBe(true);
-                  inputListener?.("alt+h");
-                  expect(hidden).toBe(false);
-                  return null;
+         await tool.execute(
+            "tool-call-id",
+            params,
+            undefined,
+            undefined,
+            {
+               hasUI: true,
+               ui: {
+                  onTerminalInput(listener: (data: string) => any) {
+                     inputListener = listener;
+                     return () => { removed = true; };
+                  },
+                  custom: async (_factory: any, options: any) => {
+                     factoryCalls += 1;
+                     options.onHandle(handle);
+                     inputListener?.(shortcut);
+                     expect(hidden).toBe(true);
+                     inputListener?.(shortcut);
+                     expect(hidden).toBe(false);
+                     return null;
+                  },
                },
             },
-         },
-      );
+         );
 
-      expect(factoryCalls).toBe(1);
-      expect(removed).toBe(true);
+         expect(factoryCalls).toBe(1);
+         expect(removed).toBe(true);
+      }
    });
    test("keeps choices and help visible for long single and batch prompts and scrolls only select prompts", async () => {
       const tool = await setupTool();

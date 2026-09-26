@@ -285,7 +285,7 @@ export function normalizeBatchQuestions(rawQuestions: BatchQuestionInput[]): Bat
       question: prompt,
       options: normalizeOptions(question.options ?? []),
       allowMultiple: Boolean(question.allowMultiple),
-      allowFreeform: question.allowFreeform ?? true,
+      allowFreeform: true,
       required: question.required ?? true,
     };
   });

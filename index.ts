@@ -68,7 +68,7 @@ function resolveShortcut(value: unknown, envValue: string | undefined, fallback:
 }
 
 function resolveOverlayToggleKey(value: unknown): ResolvedShortcut {
-  return resolveShortcut(value, process.env.PI_ASK_USER_OVERLAY_TOGGLE_KEY, "alt+o");
+  return resolveShortcut(value, process.env.PI_ASK_USER_OVERLAY_TOGGLE_KEY, "f7");
 }
 
 function resolveAllowComment(value: unknown): boolean {
@@ -361,7 +361,7 @@ export default function (pi: ExtensionAPI) {
       "Ask the user one focused question or one batch of related clarifications after gathering context",
     executionMode: "sequential",
     promptGuidelines: [
-      "Before calling ask_user, gather evidence with tools and pass a short neutral summary via the context field.",
+      "Before a substantive ask_user question whose answer depends on prior work, send a separate self-contained chat message with current state, the decision and consequences, and a recommendation when useful; then keep the UI question and context concise and non-duplicative. Do not add a long preamble for trivial checks.",
       "Use single mode for one high-stakes, preference-sensitive, or ambiguous decision boundary.",
       "If several related clarifications are already known up front, prefer one batch call instead of repeated single-question pauses.",
       "Keep batch mode to one topic, 2-7 questions, and non-branching questions whose later answers do not depend on earlier ones.",
@@ -386,14 +386,13 @@ export default function (pi: ExtensionAPI) {
         ),
       ),
       allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options. Default: false" })),
-      allowFreeform: Type.Optional(Type.Boolean({ description: "Add a freeform text option. Default: true" })),
       allowComment: Type.Optional(
         Type.Boolean({ description: "Collect an optional comment after selecting one or more options in single-question mode. Default: false" }),
       ),
       displayMode: Type.Optional(StringEnum(["overlay", "inline"] as const, { description: "UI mode. Parameter overrides PI_ASK_USER_DISPLAY_MODE; default: overlay." })),
       singleSelectLayout: Type.Optional(StringEnum(["auto", "list"] as const, { description: "Single-select layout. Parameter overrides PI_ASK_USER_SINGLE_SELECT_LAYOUT; default: auto." })),
       contextExpanded: Type.Optional(Type.Boolean({ description: "Start oversized context expanded. Parameter overrides PI_ASK_USER_CONTEXT_EXPANDED; default: false." })),
-      overlayToggleKey: Type.Optional(Type.String({ description: "Overlay hide/show shortcut. Defaults to PI_ASK_USER_OVERLAY_TOGGLE_KEY, then alt+o; use off to disable." })),
+      overlayToggleKey: Type.Optional(Type.String({ description: "Overlay hide/show shortcut. Defaults to PI_ASK_USER_OVERLAY_TOGGLE_KEY, then f7; use off to disable." })),
       commentToggleKey: Type.Optional(Type.String({ description: "Comment toggle shortcut. Defaults to PI_ASK_USER_COMMENT_TOGGLE_KEY, then ctrl+g." })),
       questions: Type.Optional(
         Type.Array(
@@ -410,7 +409,6 @@ export default function (pi: ExtensionAPI) {
               ),
             ),
             allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options. Default: false" })),
-            allowFreeform: Type.Optional(Type.Boolean({ description: "Add a freeform text option. Default: true" })),
             required: Type.Optional(Type.Boolean({ description: "Require this question before final submission. Default: true" })),
           }),
           { description: "A related set of 2-7 clarification questions for batch mode." },
@@ -468,7 +466,7 @@ export default function (pi: ExtensionAPI) {
                 overlayTimeout,
                 resolveDisplayMode(params.displayMode),
                 resolveOverlayToggleKey(params.overlayToggleKey),
-                (tui, theme, keybindings, done) => new BatchAskComponent(title, normalizedContext, questions, tui, theme, keybindings, done),
+                (tui, theme, keybindings, done) => new BatchAskComponent(title, normalizedContext, questions, tui, theme, keybindings, resolveDisplayMode(params.displayMode) === "overlay" ? resolveOverlayToggleKey(params.overlayToggleKey).spec : null, done),
               ));
 
           if (interactionWasCancelled(signal, batchDeadline)) {
@@ -519,7 +517,6 @@ export default function (pi: ExtensionAPI) {
           question,
           options: rawOptions = [],
           allowMultiple = false,
-          allowFreeform = true,
           allowComment: rawAllowComment,
           displayMode,
           singleSelectLayout,
@@ -528,6 +525,7 @@ export default function (pi: ExtensionAPI) {
           commentToggleKey,
           timeout,
         } = params;
+        const allowFreeform = true;
         const allowComment = resolveAllowComment(rawAllowComment);
         const shortcuts = resolveShortcutSet(overlayToggleKey, commentToggleKey);
         const normalizedQuestion = question?.trim();

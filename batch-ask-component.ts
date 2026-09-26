@@ -46,6 +46,7 @@ const BATCH_CONFIRM_AUTOREPEAT_WINDOW_MS = 250;
 export class BatchAskComponent implements Component {
   private title?: string;
   private context?: string;
+  private overlayToggleKey: string | null;
   private tui: TUI;
   private theme: Theme;
   private keybindings: KeybindingsManager;
@@ -66,10 +67,12 @@ export class BatchAskComponent implements Component {
     tui: TUI,
     theme: Theme,
     keybindings: KeybindingsManager,
+    overlayToggleKey: string | null,
     onDone: (result: AskUIResult | null) => void,
   ) {
     this.title = title?.trim() || undefined;
     this.context = context;
+    this.overlayToggleKey = overlayToggleKey;
     this.tui = tui;
     this.theme = theme;
     this.keybindings = keybindings;
@@ -324,9 +327,7 @@ export class BatchAskComponent implements Component {
         keybindingHint(theme, this.keybindings, "tui.input.submit", isLastQuestion ? "save & submit" : "save answer"),
         keybindingHint(theme, this.keybindings, "tui.input.newLine", "newline"),
         this.getCurrentQuestion().options.length > 0 ? literalHint(theme, "esc", "back") : null,
-        literalHint(theme, "←→", "switch question"),
-        literalHint(theme, "ctrl+n", "next"),
-        literalHint(theme, "ctrl+p", "prev"),
+        this.overlayToggleKey ? literalHint(theme, this.overlayToggleKey, "hide") : null,
         literalHint(theme, "ctrl+s", "submit"),
         keybindingHint(theme, this.keybindings, "tui.select.cancel", "cancel"),
       ]
@@ -340,9 +341,7 @@ export class BatchAskComponent implements Component {
       literalHint(theme, "↑↓", "navigate"),
       this.getCurrentQuestion().allowMultiple ? literalHint(theme, "space", "toggle") : null,
       keybindingHint(theme, this.keybindings, "tui.select.confirm", isLastQuestion ? "save & submit" : "save answer"),
-      literalHint(theme, "←→", "switch question"),
-      literalHint(theme, "ctrl+n", "next"),
-      literalHint(theme, "ctrl+p", "prev"),
+      this.overlayToggleKey ? literalHint(theme, this.overlayToggleKey, "hide") : null,
       literalHint(theme, "ctrl+s", "submit"),
       keybindingHint(theme, this.keybindings, "tui.select.cancel", "cancel"),
     ]

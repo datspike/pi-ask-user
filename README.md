@@ -29,7 +29,7 @@ High-quality video: [ask-user-demo.mp4](./media/ask-user-demo.mp4)
 - Responsive split-pane details preview on wide terminals with single-column fallback on narrow terminals
 - Context display support
 - Overlay and inline display modes, selected per call or with `PI_ASK_USER_DISPLAY_MODE`
-- Hide and restore an active overlay with `alt+o` (configurable with `PI_ASK_USER_OVERLAY_TOGGLE_KEY`) without recreating its component state
+- Hide and restore an active overlay with `f7` (configurable with `PI_ASK_USER_OVERLAY_TOGGLE_KEY`) without recreating its component state
 - Pi-TUI-aligned keybinding and editor behavior
 - Custom TUI rendering for tool calls and results
 - Graceful fallback when interactive custom UI is unavailable
@@ -101,12 +101,11 @@ The registered tool name is:
 | `context` | `string?` | - | Relevant context summary shown before the question |
 | `options` | `{title: string, description?: string}[]?` | `[]` | Multiple-choice options exposed to the model |
 | `allowMultiple` | `boolean?` | `false` | Enable multi-select mode |
-| `allowFreeform` | `boolean?` | `true` | Add a custom-response row. Printable input filters single-select options first; activating the custom row or confirming a no-match carries the filter text into the editor |
 | `allowComment` | `boolean?` | env / `false` | Expose a user-toggleable extra-context option and collect an optional comment; overrides `PI_ASK_USER_ALLOW_COMMENT` |
 | `displayMode` | `"overlay" \| "inline"?` | env / `"overlay"` | UI presentation; overrides `PI_ASK_USER_DISPLAY_MODE` |
 | `singleSelectLayout` | `"auto" \| "list"?` | env / `"auto"` | Use responsive preview panes or force a list; overrides `PI_ASK_USER_SINGLE_SELECT_LAYOUT` |
 | `contextExpanded` | `boolean?` | env / `false` | Initial state for oversized context; overrides `PI_ASK_USER_CONTEXT_EXPANDED` |
-| `overlayToggleKey` | `string?` | env / `"alt+o"` | Hide/restore shortcut; overrides `PI_ASK_USER_OVERLAY_TOGGLE_KEY`; use `off` to disable |
+| `overlayToggleKey` | `string?` | env / `"f7"` | Hide/restore shortcut; overrides `PI_ASK_USER_OVERLAY_TOGGLE_KEY`; use `off` to disable |
 | `commentToggleKey` | `string?` | env / `"ctrl+g"` | Comment toggle shortcut; overrides `PI_ASK_USER_COMMENT_TOGGLE_KEY` |
 | `timeout` | `number?` | - | Auto-dismiss after N ms; returns `cancelled: true` with `outcome: "timeout"` |
 
@@ -119,7 +118,7 @@ The registered tool name is:
 | `context` | `string?` | - | Relevant context summary shown before the batch |
 | `questions` | `BatchQuestion[]` | *required* | Related clarification questions; must contain 2-7 questions |
 | `displayMode` | `"overlay" \| "inline"?` | env / `"overlay"` | UI presentation; parameter overrides environment |
-| `overlayToggleKey` | `string?` | env / `"alt+o"` | Hide/restore shortcut in overlay mode |
+| `overlayToggleKey` | `string?` | env / `"f7"` | Hide/restore shortcut in overlay mode |
 | `timeout` | `number?` | - | Auto-dismiss after N ms; returns `cancelled: true` with `outcome: "timeout"` |
 
 ### Environment and keyboard behavior
@@ -138,7 +137,6 @@ interface BatchQuestion {
   question: string;
   options?: { title: string; description?: string }[];
   allowMultiple?: boolean;
-  allowFreeform?: boolean;
   required?: boolean;
 }
 ```
@@ -152,7 +150,7 @@ Batch-mode notes:
 - `questions` must contain between 2 and 7 entries.
 - Batch questions do not support `allowComment`; add a final optional text question instead.
 - In the interactive overlay, use `left` / `right` or `ctrl+n` / `ctrl+p` to switch questions.
-- For selectable questions with `allowFreeform`, start typing to jump straight into a custom response.
+- For selectable questions, start typing to filter options or enter a custom response.
 
 ## Example usage shapes
 
@@ -167,7 +165,6 @@ Batch-mode notes:
     { "title": "production", "description": "Customer-facing" }
   ],
   "allowMultiple": false,
-  "allowFreeform": true,
   "allowComment": true
 }
 ```
@@ -184,14 +181,12 @@ Batch-mode notes:
       "id": "surface",
       "question": "Which surface is in scope?",
       "options": [{ "title": "Overlay" }, { "title": "RPC/headless fallback" }, { "title": "Both" }],
-      "allowFreeform": true,
       "required": true
     },
     {
       "id": "compat",
       "question": "Must the current single-question behavior remain exact?",
       "options": [{ "title": "Yes" }, { "title": "No" }, { "title": "Mostly yes" }],
-      "allowFreeform": true,
       "required": true
     },
     {

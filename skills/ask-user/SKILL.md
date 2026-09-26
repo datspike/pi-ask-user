@@ -11,12 +11,12 @@ metadata:
 1. Classify the current boundary as `high_stakes`, `ambiguous`, `both`, or `clear`.
 2. If the boundary is `clear`, do not call `ask_user`.
 3. Gather evidence first with available tools; do not ask the user to decide blind.
-4. Synthesize a short neutral `context` summary covering current state, constraints, trade-offs, and any recommendation.
+4. For a substantive question whose answer depends on prior work, first send a separate self-contained chat message with current state, the decision and consequences, and a recommendation when useful. Then ask a concise UI question; keep `context` brief and non-duplicative. Do not add a long preamble for trivial checks.
 5. Choose one shape:
    - Single mode for one high-stakes, preference-sensitive, or ambiguous decision boundary.
    - `mode: "batch"` when several related clarifications are already known up front and can be answered in one pass.
 6. Keep batch mode to one topic, 2-7 non-branching questions, and do not split one known clarification packet into repeated pauses unless later questions genuinely depend on earlier answers.
-7. Ask concrete, outcome-oriented questions; keep `allowFreeform` on unless there is a good reason not to.
+7. Ask concrete, outcome-oriented questions; freeform answers are always available.
 8. After the tool returns, restate the answer text in plain language, state the next action, and proceed only within that scope.
 
 ## Trigger guide
@@ -63,4 +63,4 @@ Successful `ask_user` results expose model-visible answer text in plain-text `co
 - Ask one concrete decision in single mode.
 - Prefer 2-5 short, understandable options when options are appropriate.
 - Use batch mode only for 2-7 related clarifications on one topic.
-- Keep `allowFreeform` on unless constrained input is genuinely required.
+- Freeform answers are always available, including with selectable options.

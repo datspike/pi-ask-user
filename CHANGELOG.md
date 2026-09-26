@@ -1,9 +1,12 @@
 # Changelog
 
-## [0.15.0] - 2026-09-17
+## [0.15.0]
 
 ### Changed
 
+- Changed the default overlay hide/restore shortcut to F7 and removed batch navigation shortcut hints from the footer while retaining navigation behavior.
+- Always permit freeform answers for single and batch questions; removed `allowFreeform` from the model-facing tool schema while ignoring the field from legacy calls.
+- Before substantive questions that depend on prior work, provide a separate self-contained chat summary before asking a concise question in the UI.
 - Forward-ported the compatible upstream `pi-ask-user@0.15.0` behavior while retaining the fork's modular single and batch contracts.
 - Added per-call and environment-selected overlay/inline display mode, configurable overlay hide/restore, configurable comment toggling, `PI_ASK_USER_ALLOW_COMMENT`, and `ctrl+j` / `ctrl+k` option navigation.
 - Restored upstream search-first single-select behavior: printable input fuzzy-filters options, clearing restores the list, and explicit/no-match freeform transitions preserve the query as the editor draft.
