@@ -3,3 +3,9 @@ node_modules/
 .DS_Store
 npm-debug.log*
 .runtime/
+.runtime-*/
+.runtime-*.log
+.task_files/
+.pi/
+AGENTS.local.md
+.agents/skills/developing-ai-agents/
